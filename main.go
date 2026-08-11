@@ -76,16 +76,16 @@ func run(args []string) error {
 		return err
 	}
 
-	modulesRoot := cfg.ModulesRoot()
-
-	for _, key := range l.ModuleKeys {
-		srcPath := filepath.Join(modulesRoot, l.Modules[key].Source)
-		if _, err := os.Stat(srcPath); err != nil {
-			return fmt.Errorf("module %q: source path does not exist: %s", key, srcPath)
+	if !cfg.IsGitSource() {
+		for _, key := range l.ModuleKeys {
+			srcPath := filepath.Join(cfg.ModulesRoot(), l.Modules[key].Source)
+			if _, err := os.Stat(srcPath); err != nil {
+				return fmt.Errorf("module %q: source path does not exist: %s", key, srcPath)
+			}
 		}
 	}
 
-	mainTF, err := generate.Generate(cfg, seg, l, modulesRoot)
+	mainTF, err := generate.Generate(cfg, seg, l)
 	if err != nil {
 		return err
 	}
