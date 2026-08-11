@@ -164,6 +164,8 @@ func TestGenerate_declarationOrder(t *testing.T) {
 }
 
 func TestStringToHCL(t *testing.T) {
+	moduleResolve := func(alias, field string) string { return "module." + alias + "." + field }
+
 	cases := []struct {
 		input string
 		want  string
@@ -175,9 +177,103 @@ func TestStringToHCL(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := stringToHCL(tc.input)
+		got := stringToHCL(tc.input, moduleResolve)
 		if got != tc.want {
 			t.Errorf("stringToHCL(%q) = %q, want %q", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestGenerate_remoteStateBlocks(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys:      []string{"ec2"},
+		Modules:         map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
+		RemoteStateKeys: []string{"vpc"},
+		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
+	}
+
+	out, err := Generate(testCfg, testSeg, l, "/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		`data "terraform_remote_state" "vpc"`,
+		`backend = "s3"`,
+		`key     = "infra/aws/waldman/us-east-1/base/vpc/test/terraform.tfstate"`,
+		`bucket  = "my-state"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
+	}
+}
+
+func TestGenerate_remoteStateRef(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules: map[string]*leaf.Module{
+			"ec2": {
+				Source: "aws/5/ec2",
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${vpc.vpc_id}"},
+			},
+		},
+		RemoteStateKeys: []string{"vpc"},
+		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
+	}
+
+	out, err := Generate(testCfg, testSeg, l, "/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out, "ec2_vpc_id = data.terraform_remote_state.vpc.outputs.vpc_id") {
+		t.Errorf("expected remote state ref, got:\n%s", out)
+	}
+}
+
+func TestGenerate_remoteStateRefMixed(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules: map[string]*leaf.Module{
+			"ec2": {
+				Source: "aws/5/ec2",
+				Vars:   map[string]interface{}{"ec2_tag": "${vpc.name}/ec2"},
+			},
+		},
+		RemoteStateKeys: []string{"vpc"},
+		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
+	}
+
+	out, err := Generate(testCfg, testSeg, l, "/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out, `ec2_tag = "${data.terraform_remote_state.vpc.outputs.name}/ec2"`) {
+		t.Errorf("expected interpolated remote state ref, got:\n%s", out)
+	}
+}
+
+func TestGenerate_remoteStateBlocksBeforeModules(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules:    map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
+		RemoteStateKeys: []string{"vpc"},
+		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
+	}
+
+	out, err := Generate(testCfg, testSeg, l, "/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dataIdx := strings.Index(out, `data "terraform_remote_state"`)
+	modIdx := strings.Index(out, `module "ec2"`)
+	if dataIdx == -1 || modIdx == -1 {
+		t.Fatal("expected both data and module blocks")
+	}
+	if dataIdx > modIdx {
+		t.Error("remote state blocks must appear before module blocks")
 	}
 }
