@@ -12,8 +12,8 @@ func TestParse_valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if seg.Provider != "aws" {
-		t.Errorf("Provider = %q, want %q", seg.Provider, "aws")
+	if seg.Cloud != "aws" {
+		t.Errorf("Cloud = %q, want %q", seg.Cloud, "aws")
 	}
 	if seg.Profile != "waldman" {
 		t.Errorf("Profile = %q, want %q", seg.Profile, "waldman")
@@ -60,13 +60,13 @@ func TestParse_errors(t *testing.T) {
 			name:    "wrong segment count",
 			root:    "/project",
 			leaf:    "/project/infra/aws/waldman/us-east-1/production/ansible-anchor.yaml",
-			wantErr: "infra/<provider>",
+			wantErr: "infra/<cloud>",
 		},
 		{
 			name:    "missing infra prefix",
 			root:    "/project",
 			leaf:    "/project/other/aws/waldman/us-east-1/production/services/ansible-anchor.yaml",
-			wantErr: "infra/<provider>",
+			wantErr: "infra/<cloud>",
 		},
 	}
 

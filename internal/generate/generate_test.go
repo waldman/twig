@@ -10,7 +10,7 @@ import (
 )
 
 var testSeg = &pathparse.Segments{
-	Provider:    "aws",
+	Cloud:       "aws",
 	Profile:     "waldman",
 	Region:      "us-east-1",
 	Environment: "production",
@@ -39,7 +39,7 @@ func TestGenerate_pathVarsInjected(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`provider    = "aws"`,
+		`cloud       = "aws"`,
 		`profile     = "waldman"`,
 		`region      = "us-east-1"`,
 		`environment = "production"`,

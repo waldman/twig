@@ -9,7 +9,7 @@ import (
 
 // All seven path variables — none may appear in vars.
 var reservedVars = map[string]bool{
-	"provider":    true,
+	"cloud":       true,
 	"profile":     true,
 	"region":      true,
 	"environment": true,

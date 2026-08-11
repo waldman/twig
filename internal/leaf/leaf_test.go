@@ -62,7 +62,7 @@ modules:
 }
 
 func TestLoad_reservedVar(t *testing.T) {
-	reserved := []string{"provider", "profile", "region", "environment", "class", "component", "module"}
+	reserved := []string{"cloud", "profile", "region", "environment", "class", "component", "module"}
 	for _, v := range reserved {
 		t.Run(v, func(t *testing.T) {
 			path := writeLeaf(t, "modules:\n  foo:\n    source: aws/5/x\n    vars:\n      "+v+": bad\n")
