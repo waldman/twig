@@ -21,7 +21,7 @@ without templates, HCL authoring, or state management ceremony.
 ## Path convention
 
 ```
-infra/<provider>/<profile>/<region>/<environment>/<class>/<component>.yaml
+infra/<cloud>/<profile>/<region>/<environment>/<class>/<component>.yaml
 ```
 
 twig accepts the leaf file as a positional argument. It walks up from that
@@ -31,7 +31,7 @@ the leaf file.
 
 | Source | Variable | Example |
 |---|---|---|
-| path segment 1 | `provider` | `aws` |
+| path segment 1 | `cloud` | `aws` |
 | path segment 2 | `profile` | `waldman` |
 | path segment 3 | `region` | `us-east-1` |
 | path segment 4 | `environment` | `production` |
@@ -84,7 +84,7 @@ declares which modules to call and the variable values to pass.
 ```yaml
 modules:
   <instance_key>:
-    source: <provider>/<version>/<module-name>
+    source: <cloud>/<version>/<module-name>
     vars:
       <variable_name>: <value>
 ```
@@ -201,7 +201,7 @@ terraform {
   }
   backend "s3" {
     # all fields from twig.yaml backend block, plus:
-    key = "infra/<provider>/<profile>/<region>/<environment>/<class>/<component>/terraform.tfstate"
+    key = "infra/<cloud>/<profile>/<region>/<environment>/<class>/<component>/terraform.tfstate"
   }
 }
 ```
@@ -223,7 +223,7 @@ One block per module entry, in declaration order:
 module "<instance_key>" {
   source = "<absolute-path-to-module>"
 
-  provider    = "<provider>"
+  cloud       = "<cloud>"
   profile     = "<profile>"
   region      = "<region>"
   environment = "<environment>"

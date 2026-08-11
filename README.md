@@ -9,7 +9,7 @@ One thing done well: turn a declarative module list into runnable Terraform with
 Your infrastructure lives in a directory tree where the path encodes context:
 
 ```
-infra/<provider>/<profile>/<region>/<environment>/<class>/<component>.yaml
+infra/<cloud>/<profile>/<region>/<environment>/<class>/<component>.yaml
 ```
 
 Each `.yaml` file (a _leaf_) lists the Terraform modules to call. twig reads the path, reads the file, generates `main.tf` in a local cache directory, and runs Terraform there. Your codebase stays clean.
@@ -18,7 +18,7 @@ Seven variables are automatically derived and injected into every module call:
 
 | Variable      | Source              | Example            |
 |---------------|---------------------|--------------------|
-| `provider`    | path segment        | `aws`              |
+| `cloud`       | path segment        | `aws`              |
 | `profile`     | path segment        | `myprofile`        |
 | `region`      | path segment        | `us-east-1`        |
 | `environment` | path segment        | `production`       |
@@ -77,7 +77,7 @@ twig apply infra/aws/myprofile/us-east-1/production/services/my-app.yaml -- -aut
 ```yaml
 modules:
   <instance_key>:
-    source: <provider>/<version>/<module-name>
+    source: <cloud>/<version>/<module-name>
     vars:
       <variable>: <value>
 ```

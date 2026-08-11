@@ -72,7 +72,7 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, seg *pat
 	b.WriteString(fmt.Sprintf("module %q {\n", key))
 	b.WriteString(fmt.Sprintf("  source = %q\n\n", srcPath))
 
-	b.WriteString(fmt.Sprintf("  provider    = %q\n", seg.Provider))
+	b.WriteString(fmt.Sprintf("  cloud       = %q\n", seg.Cloud))
 	b.WriteString(fmt.Sprintf("  profile     = %q\n", seg.Profile))
 	b.WriteString(fmt.Sprintf("  region      = %q\n", seg.Region))
 	b.WriteString(fmt.Sprintf("  environment = %q\n", seg.Environment))

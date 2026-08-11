@@ -7,7 +7,7 @@ import (
 )
 
 type Segments struct {
-	Provider    string
+	Cloud       string
 	Profile     string
 	Region      string
 	Environment string
@@ -18,7 +18,7 @@ type Segments struct {
 // Parse extracts path variables from the absolute leaf file path given the
 // project root (directory containing twig.yaml, which sits beside infra/).
 //
-// Expected structure: <root>/infra/<provider>/<profile>/<region>/<env>/<class>/<component>.yaml
+// Expected structure: <root>/infra/<cloud>/<profile>/<region>/<env>/<class>/<component>.yaml
 func Parse(root, leafAbs string) (*Segments, error) {
 	rel, err := filepath.Rel(root, leafAbs)
 	if err != nil {
@@ -32,16 +32,16 @@ func Parse(root, leafAbs string) (*Segments, error) {
 
 	// strip .yaml and split
 	parts := strings.Split(strings.TrimSuffix(rel, ".yaml"), "/")
-	// parts: ["infra", provider, profile, region, environment, class, component]
+	// parts: ["infra", cloud, profile, region, environment, class, component]
 	if len(parts) != 7 || parts[0] != "infra" {
 		return nil, fmt.Errorf(
-			"leaf must be at infra/<provider>/<profile>/<region>/<env>/<class>/<component>.yaml below %s, got: %s",
+			"leaf must be at infra/<cloud>/<profile>/<region>/<env>/<class>/<component>.yaml below %s, got: %s",
 			root, rel,
 		)
 	}
 
 	return &Segments{
-		Provider:    parts[1],
+		Cloud:       parts[1],
 		Profile:     parts[2],
 		Region:      parts[3],
 		Environment: parts[4],
@@ -53,5 +53,5 @@ func Parse(root, leafAbs string) (*Segments, error) {
 // StateKey returns the S3 backend key for this leaf.
 func (s *Segments) StateKey() string {
 	return fmt.Sprintf("infra/%s/%s/%s/%s/%s/%s/terraform.tfstate",
-		s.Provider, s.Profile, s.Region, s.Environment, s.Class, s.Component)
+		s.Cloud, s.Profile, s.Region, s.Environment, s.Class, s.Component)
 }
