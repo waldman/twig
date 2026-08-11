@@ -1,0 +1,6 @@
+modules_path: ../terraform-modules/modules
+
+backend:
+  bucket: my-terraform-state
+  region: us-east-1
+  dynamodb_table: my-terraform-locks  # optional state locking

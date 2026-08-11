@@ -1,0 +1,47 @@
+modules:
+  # S3 bucket for application state
+  bucket:
+    source: aws/5/s3-bucket
+    vars:
+      s3_bucket_name: my-app-state
+
+  # DynamoDB table for distributed locking
+  lock_table:
+    source: aws/5/dynamodb
+    vars:
+      dynamodb_table_name: my-app-locks
+      dynamodb_hash_key: LockID
+
+  # IAM user for the application (read/write)
+  app_user:
+    source: aws/5/iam-user
+
+  app_user_policy:
+    source: aws/5/iam-policy
+    vars:
+      iam_policy_user_name: ${app_user.user_name}
+      iam_policy_statements:
+        - effect: Allow
+          actions: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+          resources:
+            - ${bucket.bucket_arn}
+            - ${bucket.bucket_arn}/*
+        - effect: Allow
+          actions: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:DeleteItem, dynamodb:DescribeTable]
+          resources:
+            - ${lock_table.table_arn}
+
+  # IAM user for CI/CD (deploy only)
+  cicd_user:
+    source: aws/5/iam-user
+
+  cicd_user_policy:
+    source: aws/5/iam-policy
+    vars:
+      iam_policy_user_name: ${cicd_user.user_name}
+      iam_policy_statements:
+        - effect: Allow
+          actions: [s3:PutObject, s3:DeleteObject, s3:ListBucket]
+          resources:
+            - ${bucket.bucket_arn}
+            - ${bucket.bucket_arn}/*
