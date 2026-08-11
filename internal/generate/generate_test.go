@@ -200,8 +200,8 @@ func TestGenerate_remoteStateBlocks(t *testing.T) {
 	for _, want := range []string{
 		`data "terraform_remote_state" "vpc"`,
 		`backend = "s3"`,
-		`key     = "infra/aws/waldman/us-east-1/base/vpc/test/terraform.tfstate"`,
-		`bucket  = "my-state"`,
+		`key         = "infra/aws/waldman/us-east-1/base/vpc/test/terraform.tfstate"`,
+		`bucket      = "my-state"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\ngot:\n%s", want, out)

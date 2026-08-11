@@ -105,9 +105,9 @@ func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf
 		}
 		sort.Strings(bkeys)
 		for _, k := range bkeys {
-			b.WriteString(fmt.Sprintf("    %-8s= %q\n", k, cfg.Backend[k]))
+			b.WriteString(fmt.Sprintf("    %-12s= %q\n", k, cfg.Backend[k]))
 		}
-		b.WriteString(fmt.Sprintf("    %-8s= %q\n", "key", remoteSeg.StateKey()))
+		b.WriteString(fmt.Sprintf("    %-12s= %q\n", "key", remoteSeg.StateKey()))
 		b.WriteString("  }\n")
 		b.WriteString("}\n\n")
 	}
