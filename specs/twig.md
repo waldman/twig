@@ -99,15 +99,33 @@ modules:
   in `vars`.
 - `vars` values are strings, numbers, booleans, lists, or maps.
 
+### Remote state references
+
+An optional `remote_state:` block declares outputs consumed from other leaves.
+The values are read from their S3 state files at plan/apply time — no data
+copying, no hardcoding.
+
+```yaml
+remote_state:
+  <alias>: <path-to-leaf.yaml relative to project root>
+```
+
+Aliases must not conflict with module instance keys. The same backend config
+(bucket, region, profile) is used; only the `key` changes to point at the
+target leaf's state file.
+
 ### Cross-module references
 
-A value containing `${instance_key.output_name}` is a cross-module reference.
+A value containing `${alias.output_name}` is a cross-ref. The alias can be
+either a module instance key (intra-leaf) or a `remote_state` alias
+(cross-leaf). The syntax is identical; twig resolves them differently:
 
-| YAML value | Generated HCL |
-|---|---|
-| `${x.bucket_arn}` | `module.x.bucket_arn` (unquoted reference) |
-| `${x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` (interpolated string) |
-| `arn:aws:s3:::my-bucket` | `"arn:aws:s3:::my-bucket"` (string literal) |
+| YAML value | Context | Generated HCL |
+|---|---|---|
+| `${x.bucket_arn}` | `x` is a module key | `module.x.bucket_arn` |
+| `${vpc.vpc_id}` | `vpc` is a remote state alias | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${x.bucket_arn}/*` | either | `"${module.x.bucket_arn}/*"` (interpolated string) |
+| `arn:aws:s3:::my-bucket` | — | `"arn:aws:s3:::my-bucket"` (string literal) |
 
 ### Example
 
@@ -166,6 +184,29 @@ modules:
 Note: `iam_cicd` and `iam_infra` require no `vars` — the `module` variable
 (`iam_cicd` / `iam_infra`) already distinguishes them within the component.
 
+### Cross-leaf example
+
+```
+infra/aws/waldman/us-east-1/dev/ec2/app.yaml
+```
+
+```yaml
+remote_state:
+  vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
+
+modules:
+  app:
+    source: aws/5/ec2
+    vars:
+      ec2_vpc_id:    ${vpc.vpc_id}
+      ec2_subnet_id: ${vpc.first_public_subnet_id}
+```
+
+twig generates a `data "terraform_remote_state" "vpc"` block that reads
+`vpc_id` and `first_public_subnet_id` from the vpc leaf's S3 state file.
+No coordination required between the two leaf operators beyond agreeing on
+output names.
+
 ---
 
 ## Cache directory
@@ -215,7 +256,21 @@ provider "aws" {
 }
 ```
 
-### 3. module blocks
+### 3. remote state blocks (one per `remote_state:` entry, in declaration order)
+
+```hcl
+data "terraform_remote_state" "<alias>" {
+  backend = "s3"
+  config = {
+    # all backend fields from twig.yaml except dynamodb_table, plus derived key:
+    bucket  = "<bucket>"
+    region  = "<region>"
+    key     = "infra/<cloud>/.../<component>/terraform.tfstate"
+  }
+}
+```
+
+### 4. module blocks
 
 One block per module entry, in declaration order:
 
@@ -273,5 +328,7 @@ twig apply infra/aws/waldman/us-east-1/production/services/ansible-anchor.yaml -
 | `twig.yaml` not found walking up from `<leaf-file>` | fatal |
 | Leaf file not exactly at `infra/<p>/<p>/<p>/<p>/<p>/<name>.yaml` below project root | fatal |
 | `source` module directory does not exist | fatal |
-| Cross-ref `${x.y}` where `x` is not a declared instance key | fatal |
+| Cross-ref `${x.y}` where `x` is neither a declared module key nor a `remote_state` alias | fatal |
+| `remote_state` alias conflicts with a module instance key | fatal |
+| `remote_state` leaf path does not match the path convention | fatal |
 | Reserved path variable used in `vars` | fatal |

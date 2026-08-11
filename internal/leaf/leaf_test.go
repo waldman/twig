@@ -93,3 +93,45 @@ func TestLoad_fileNotFound(t *testing.T) {
 		t.Fatal("expected error for missing file, got nil")
 	}
 }
+
+func TestLoad_remoteState_valid(t *testing.T) {
+	path := writeLeaf(t, `
+remote_state:
+  vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
+  keys: infra/aws/waldman/us-east-1/base/ec2/default-key-pair.yaml
+
+modules:
+  ec2:
+    source: aws/5/ec2
+    vars:
+      ec2_vpc_id: ${vpc.vpc_id}
+`)
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(l.RemoteStateKeys) != 2 {
+		t.Fatalf("want 2 remote state aliases, got %d", len(l.RemoteStateKeys))
+	}
+	if l.RemoteStateKeys[0] != "vpc" || l.RemoteStateKeys[1] != "keys" {
+		t.Errorf("unexpected remote state key order: %v", l.RemoteStateKeys)
+	}
+	if l.RemoteState["vpc"] != "infra/aws/waldman/us-east-1/base/vpc/main.yaml" {
+		t.Errorf("unexpected path: %q", l.RemoteState["vpc"])
+	}
+}
+
+func TestLoad_remoteState_aliasConflict(t *testing.T) {
+	path := writeLeaf(t, `
+remote_state:
+  ec2: infra/aws/waldman/us-east-1/base/vpc/main.yaml
+
+modules:
+  ec2:
+    source: aws/5/ec2
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for alias/module key conflict, got nil")
+	}
+}

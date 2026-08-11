@@ -23,14 +23,19 @@ type Module struct {
 	Vars   map[string]interface{} `yaml:"vars"`
 }
 
-// Leaf is the parsed leaf file. Order of module declarations is preserved.
+// Leaf is the parsed leaf file. Declaration order is preserved for both
+// remote_state aliases and module instance keys.
 type Leaf struct {
+	RemoteStateKeys []string
+	RemoteState     map[string]string // alias → leaf path relative to project root
+
 	ModuleKeys []string
 	Modules    map[string]*Module
 }
 
 type rawLeaf struct {
-	Modules yaml.Node `yaml:"modules"`
+	RemoteState yaml.Node `yaml:"remote_state"`
+	Modules     yaml.Node `yaml:"modules"`
 }
 
 func Load(leafFile string) (*Leaf, error) {
@@ -44,11 +49,27 @@ func Load(leafFile string) (*Leaf, error) {
 		return nil, fmt.Errorf("parse %s: %w", leafFile, err)
 	}
 
-	leaf := &Leaf{Modules: make(map[string]*Module)}
+	l := &Leaf{
+		RemoteState: make(map[string]string),
+		Modules:     make(map[string]*Module),
+	}
 
-	nodes := raw.Modules.Content
+	// parse remote_state first — needed for alias conflict check below
+	nodes := raw.RemoteState.Content
+	for i := 0; i+1 < len(nodes); i += 2 {
+		alias := nodes[i].Value
+		path := nodes[i+1].Value
+		l.RemoteStateKeys = append(l.RemoteStateKeys, alias)
+		l.RemoteState[alias] = path
+	}
+
+	// parse modules
+	nodes = raw.Modules.Content
 	for i := 0; i+1 < len(nodes); i += 2 {
 		key := nodes[i].Value
+		if _, conflict := l.RemoteState[key]; conflict {
+			return nil, fmt.Errorf("module key %q conflicts with remote_state alias of the same name", key)
+		}
 		var mod Module
 		if err := nodes[i+1].Decode(&mod); err != nil {
 			return nil, fmt.Errorf("module %q: %w", key, err)
@@ -61,9 +82,9 @@ func Load(leafFile string) (*Leaf, error) {
 				return nil, fmt.Errorf("module %q: %q is a reserved path variable and cannot appear in vars", key, varName)
 			}
 		}
-		leaf.ModuleKeys = append(leaf.ModuleKeys, key)
-		leaf.Modules[key] = &mod
+		l.ModuleKeys = append(l.ModuleKeys, key)
+		l.Modules[key] = &mod
 	}
 
-	return leaf, nil
+	return l, nil
 }
