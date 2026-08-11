@@ -15,7 +15,7 @@ import (
 var crossRefRe = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
 // Generate produces the content of main.tf for the given leaf.
-func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf, modulesRoot string) (string, error) {
+func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string, error) {
 	resolve := makeResolver(l.Modules, l.RemoteState)
 
 	for _, key := range l.ModuleKeys {
@@ -34,7 +34,7 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf, modules
 	}
 
 	for _, key := range l.ModuleKeys {
-		if err := writeModuleBlock(&b, key, l.Modules[key], seg, modulesRoot, resolve); err != nil {
+		if err := writeModuleBlock(&b, key, l.Modules[key], seg, cfg, resolve); err != nil {
 			return "", err
 		}
 	}
@@ -114,8 +114,8 @@ func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf
 	return nil
 }
 
-func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, seg *pathparse.Segments, modulesRoot string, resolve func(string, string) string) error {
-	srcPath := modulesRoot + "/" + mod.Source
+func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, seg *pathparse.Segments, cfg *config.Config, resolve func(string, string) string) error {
+	srcPath := cfg.ModuleSource(mod.Source)
 
 	b.WriteString(fmt.Sprintf("module %q {\n", key))
 	b.WriteString(fmt.Sprintf("  source = %q\n\n", srcPath))

@@ -40,7 +40,8 @@ Download the latest release for your platform from the [releases page](https://g
 Place a `twig.yaml` at the root of your project (beside the `infra/` directory):
 
 ```yaml
-modules_path: ../terraform-modules/modules
+modules_path: github.com/your-org/terraform-modules//modules
+modules_ref:  v1.0.0
 
 backend:
   bucket: my-terraform-state
@@ -48,9 +49,48 @@ backend:
   dynamodb_table: my-terraform-locks  # optional
 ```
 
-- `modules_path` — path to your Terraform modules, relative to `twig.yaml`
-- `backend` — S3 backend config; `key` is always derived from the leaf path and must not be set here
-- Override `modules_path` at runtime with `TWIG_MODULES_PATH`
+- `modules_path` — path to your Terraform modules. Accepts a local path (relative to `twig.yaml` or absolute) or a git URL (see below).
+- `modules_ref` — git ref (tag, branch, or commit SHA) to pin when `modules_path` is a git URL. Omit to use HEAD.
+- `backend` — S3 backend config; `key` is always derived from the leaf path and must not be set here.
+- Override `modules_path` at runtime with `TWIG_MODULES_PATH`.
+
+### modules_path: local vs git
+
+**Local path** — modules live on disk alongside (or near) your project:
+
+```yaml
+modules_path: ../terraform-modules/modules
+```
+
+twig validates that each module source path exists before generating `main.tf`.
+
+**Git URL** — modules are fetched from a remote repository by `terraform init`. twig constructs the correct `git::` source URL and passes it through; no local clone is required.
+
+Supported formats:
+
+| Format | Example |
+|---|---|
+| Bare hostname (recommended) | `github.com/org/repo//subdir` |
+| Full HTTPS | `https://github.com/org/repo.git//subdir` |
+| SSH | `git@github.com:org/repo.git//subdir` |
+| With `git::` prefix | `git::https://github.com/org/repo.git//subdir` |
+
+The `//` separates the repository URL from the subdirectory within the repo. Omit `//subdir` if modules live at the repo root.
+
+Pin to a specific release with `modules_ref`:
+
+```yaml
+modules_path: github.com/your-org/terraform-modules//modules
+modules_ref:  v2.1.0
+```
+
+This generates module sources like:
+
+```hcl
+source = "git::https://github.com/your-org/terraform-modules.git//modules/aws/5/vpc?ref=v2.1.0"
+```
+
+Terraform caches fetched modules in `.terraform/` inside the twig cache directory — subsequent runs do not re-download unless the ref or source changes.
 
 ## Usage
 

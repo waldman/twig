@@ -124,3 +124,98 @@ backend:
 		t.Errorf("ModulesRoot = %q, want /override/path", got)
 	}
 }
+
+func TestIsGitSource(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"./modules", false},
+		{"/abs/path/modules", false},
+		{"../relative/modules", false},
+		{"github.com/org/repo//modules", true},
+		{"https://github.com/org/repo.git//modules", true},
+		{"git@github.com:org/repo.git//modules", true},
+		{"git::https://github.com/org/repo.git//modules", true},
+		{"gitlab.com/org/repo//modules", true},
+		{"bitbucket.org/org/repo//modules", true},
+	}
+
+	for _, tc := range cases {
+		cfg := &Config{ModulesPath: tc.path}
+		if got := cfg.IsGitSource(); got != tc.want {
+			t.Errorf("IsGitSource(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestModuleSource_local(t *testing.T) {
+	cfg := &Config{ModulesPath: "/modules", Root: "/project"}
+	got := cfg.ModuleSource("aws/5/vpc")
+	if got != "/modules/aws/5/vpc" {
+		t.Errorf("ModuleSource = %q, want /modules/aws/5/vpc", got)
+	}
+}
+
+func TestModuleSource_gitBareHostname(t *testing.T) {
+	cfg := &Config{
+		ModulesPath: "github.com/waldman/terraform//modules",
+		ModulesRef:  "v1.0.0",
+		Root:        "/project",
+	}
+	got := cfg.ModuleSource("aws/5/vpc")
+	want := "git::https://github.com/waldman/terraform.git//modules/aws/5/vpc?ref=v1.0.0"
+	if got != want {
+		t.Errorf("ModuleSource = %q, want %q", got, want)
+	}
+}
+
+func TestModuleSource_gitHTTPS(t *testing.T) {
+	cfg := &Config{
+		ModulesPath: "https://github.com/waldman/terraform.git//modules",
+		ModulesRef:  "v2.3.1",
+		Root:        "/project",
+	}
+	got := cfg.ModuleSource("aws/5/s3-bucket")
+	want := "git::https://github.com/waldman/terraform.git//modules/aws/5/s3-bucket?ref=v2.3.1"
+	if got != want {
+		t.Errorf("ModuleSource = %q, want %q", got, want)
+	}
+}
+
+func TestModuleSource_gitSSH(t *testing.T) {
+	cfg := &Config{
+		ModulesPath: "git@github.com:waldman/terraform.git//modules",
+		Root:        "/project",
+	}
+	got := cfg.ModuleSource("aws/5/vpc")
+	want := "git::git@github.com:waldman/terraform.git//modules/aws/5/vpc"
+	if got != want {
+		t.Errorf("ModuleSource = %q, want %q", got, want)
+	}
+}
+
+func TestModuleSource_gitNoSubdir(t *testing.T) {
+	cfg := &Config{
+		ModulesPath: "github.com/waldman/terraform-modules",
+		ModulesRef:  "v1.0.0",
+		Root:        "/project",
+	}
+	got := cfg.ModuleSource("aws/5/vpc")
+	want := "git::https://github.com/waldman/terraform-modules.git//aws/5/vpc?ref=v1.0.0"
+	if got != want {
+		t.Errorf("ModuleSource = %q, want %q", got, want)
+	}
+}
+
+func TestModuleSource_gitNoRef(t *testing.T) {
+	cfg := &Config{
+		ModulesPath: "github.com/waldman/terraform//modules",
+		Root:        "/project",
+	}
+	got := cfg.ModuleSource("aws/5/vpc")
+	want := "git::https://github.com/waldman/terraform.git//modules/aws/5/vpc"
+	if got != want {
+		t.Errorf("ModuleSource = %q, want %q", got, want)
+	}
+}

@@ -33,7 +33,7 @@ func TestGenerate_pathVarsInjected(t *testing.T) {
 		"s3_bucket": {Source: "aws/5/s3-bucket"},
 	})
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestGenerate_moduleVarIsInstanceKey(t *testing.T) {
 		"iam_infra": {Source: "aws/5/iam-user"},
 	})
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestGenerate_crossRefPure(t *testing.T) {
 		}},
 	})
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestGenerate_crossRefMixed(t *testing.T) {
 		}},
 	})
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestGenerate_crossRefUndeclared(t *testing.T) {
 		}},
 	})
 
-	_, err := Generate(testCfg, testSeg, l, "/modules")
+	_, err := Generate(testCfg, testSeg, l)
 	if err == nil {
 		t.Fatal("expected error for undeclared cross-ref, got nil")
 	}
@@ -131,7 +131,7 @@ func TestGenerate_backendKey(t *testing.T) {
 		"s3_bucket": {Source: "aws/5/s3-bucket"},
 	})
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestGenerate_declarationOrder(t *testing.T) {
 		"aaa": {Source: "aws/5/dynamodb"},
 	})
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +160,28 @@ func TestGenerate_declarationOrder(t *testing.T) {
 	}
 	if zIdx > aIdx {
 		t.Error("declaration order not preserved: zzz should appear before aaa")
+	}
+}
+
+func TestGenerate_gitModuleSource(t *testing.T) {
+	gitCfg := &config.Config{
+		ModulesPath: "github.com/waldman/terraform//modules",
+		ModulesRef:  "v1.0.0",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Root:        "/project",
+	}
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{
+		"vpc": {Source: "aws/5/vpc"},
+	})
+
+	out, err := Generate(gitCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := `source = "git::https://github.com/waldman/terraform.git//modules/aws/5/vpc?ref=v1.0.0"`
+	if !strings.Contains(out, want) {
+		t.Errorf("expected git source URL, got:\n%s", out)
 	}
 }
 
@@ -192,7 +214,7 @@ func TestGenerate_remoteStateBlocks(t *testing.T) {
 		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
 	}
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +244,7 @@ func TestGenerate_remoteStateRef(t *testing.T) {
 		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
 	}
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +267,7 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
 	}
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +285,7 @@ func TestGenerate_remoteStateBlocksBeforeModules(t *testing.T) {
 		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
 	}
 
-	out, err := Generate(testCfg, testSeg, l, "/modules")
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
