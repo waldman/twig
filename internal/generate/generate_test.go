@@ -124,7 +124,7 @@ func TestGenerate_crossRefPure(t *testing.T) {
 	l := makeLeaf([]string{"bucket", "policy"}, map[string]*leaf.Module{
 		"bucket": {Source: "aws/5/s3-bucket"},
 		"policy": {Source: "aws/5/iam-policy", Vars: map[string]interface{}{
-			"target_arn": "${bucket.bucket_arn}",
+			"target_arn": "${module.bucket.bucket_arn}",
 		}},
 	})
 
@@ -143,7 +143,7 @@ func TestGenerate_crossRefMixed(t *testing.T) {
 	l := makeLeaf([]string{"bucket", "policy"}, map[string]*leaf.Module{
 		"bucket": {Source: "aws/5/s3-bucket"},
 		"policy": {Source: "aws/5/iam-policy", Vars: map[string]interface{}{
-			"wildcard_arn": "${bucket.bucket_arn}/*",
+			"wildcard_arn": "${module.bucket.bucket_arn}/*",
 		}},
 	})
 
@@ -161,7 +161,7 @@ func TestGenerate_crossRefMixed(t *testing.T) {
 func TestGenerate_crossRefUndeclared(t *testing.T) {
 	l := makeLeaf([]string{"policy"}, map[string]*leaf.Module{
 		"policy": {Source: "aws/5/iam-policy", Vars: map[string]interface{}{
-			"arn": "${nonexistent.arn}",
+			"arn": "${module.nonexistent.arn}",
 		}},
 	})
 
@@ -234,20 +234,23 @@ func TestGenerate_gitModuleSource(t *testing.T) {
 }
 
 func TestStringToHCL(t *testing.T) {
-	moduleResolve := func(alias, field string) string { return "module." + alias + "." + field }
+	resolve := func(ns, key, field string) string { return "module." + key + "." + field }
+	inherited := map[string]interface{}{"vpn_cidr": "10.30.0.0/16"}
 
 	cases := []struct {
 		input string
 		want  string
 	}{
 		{"plain string", `"plain string"`},
-		{"${x.arn}", "module.x.arn"},
-		{"${x.arn}/*", `"${module.x.arn}/*"`},
-		{"prefix-${x.arn}-suffix", `"prefix-${module.x.arn}-suffix"`},
+		{"${module.x.arn}", "module.x.arn"},
+		{"${module.x.arn}/*", `"${module.x.arn}/*"`},
+		{"prefix-${module.x.arn}-suffix", `"prefix-${module.x.arn}-suffix"`},
+		{"${var.vpn_cidr}", `"10.30.0.0/16"`},
+		{"cidr:${var.vpn_cidr}/32", `"cidr:10.30.0.0/16/32"`},
 	}
 
 	for _, tc := range cases {
-		got := stringToHCL(tc.input, moduleResolve)
+		got := stringToHCL(tc.input, resolve, inherited)
 		if got != tc.want {
 			t.Errorf("stringToHCL(%q) = %q, want %q", tc.input, got, tc.want)
 		}
@@ -397,7 +400,7 @@ func TestGenerate_remoteStateRef(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${vpc.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.vpc.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -420,7 +423,7 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_tag": "${vpc.name}/ec2"},
+				Vars:   map[string]interface{}{"ec2_tag": "${remote.vpc.name}/ec2"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -434,6 +437,57 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 
 	if !strings.Contains(out, `ec2_tag = "${data.terraform_remote_state.vpc.outputs.name}/ec2"`) {
 		t.Errorf("expected interpolated remote state ref, got:\n%s", out)
+	}
+}
+
+func TestGenerate_inheritedVars(t *testing.T) {
+	// Write a vars.yaml at the cloud level for this test
+	cloudDir := filepath.Join(testCfg.Root, "infra", "aws")
+	if err := os.WriteFile(filepath.Join(cloudDir, "vars.yaml"), []byte("cost_center: engineering\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(filepath.Join(cloudDir, "vars.yaml")) })
+
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.InheritedVars = map[string]interface{}{"cost_center": "engineering"}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `cost_center = "engineering"`) {
+		t.Errorf("inherited var missing from output:\n%s", out)
+	}
+}
+
+func TestGenerate_inheritedVarsModuleWins(t *testing.T) {
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
+		"ec2": {Source: "aws/5/ec2", Vars: map[string]interface{}{"cost_center": "override"}},
+	})
+	l.InheritedVars = map[string]interface{}{"cost_center": "inherited"}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `cost_center = "override"`) {
+		t.Errorf("module var should override inherited:\n%s", out)
+	}
+	if strings.Contains(out, `cost_center = "inherited"`) {
+		t.Errorf("inherited value should be overridden:\n%s", out)
+	}
+}
+
+func TestGenerate_inheritedVarsCrossRefRejected(t *testing.T) {
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.InheritedVars = map[string]interface{}{"bad": "${module.ec2.output}"}
+
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil {
+		t.Fatal("expected error for cross-ref in inherited vars, got nil")
+	}
+	if !strings.Contains(err.Error(), "vars.yaml") {
+		t.Errorf("error should mention vars.yaml, got: %v", err)
 	}
 }
 

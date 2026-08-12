@@ -138,6 +138,47 @@ Keys match the `<cloud>` segment used in module source paths (`aws/5/vpc`, `data
 
 twig errors if `providers.yaml` is missing for a leaf's cloud.
 
+## Inherited variables
+
+Place a `vars.yaml` at any directory level under `infra/` to inject variables into every module in leaves below that point:
+
+```
+infra/vars.yaml                                          ← all clouds
+infra/aws/vars.yaml                                      ← all AWS leaves
+infra/aws/myprofile/us-east-1/vars.yaml                  ← all leaves in this region
+infra/aws/myprofile/us-east-1/production/vars.yaml       ← all production leaves
+infra/aws/myprofile/us-east-1/production/services/vars.yaml  ← all service leaves
+```
+
+Example:
+
+```yaml
+# infra/aws/vars.yaml
+cost_center: engineering
+vpn_cidr: 10.30.0.0/16
+default_tags:
+  ManagedBy: twig
+```
+
+Reference inherited vars in leaf files with `${var.<name>}`:
+
+```yaml
+modules:
+  sg:
+    source: aws/5/security-group
+    vars:
+      sg_ingress_cidr: ${var.vpn_cidr}
+```
+
+A pure `${var.x}` expands to the correct HCL for its type (string, bool, number, list, map). Embedded in a string it is interpolated as its string representation.
+
+Merge rules:
+- Lower levels (closer to the leaf) override higher levels.
+- Module-level `vars:` in the leaf always override inherited values.
+- Reserved path variable names (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) are rejected at load time.
+- The ref namespace names (`module`, `remote`, `var`) are reserved and cannot be used as module instance keys or remote_state aliases.
+- References (`${module.x.y}`, `${remote.x.y}`, `${var.x}`) are not supported inside `vars.yaml` files.
+
 ## Leaf file format
 
 ```yaml
@@ -148,7 +189,13 @@ modules:
       <variable>: <value>
 ```
 
-Cross-module references use `${instance_key.output_name}`:
+References use explicit namespace prefixes:
+
+| Form | Resolves to |
+|---|---|
+| `${module.ec2.vpc_id}` | `module.ec2.vpc_id` |
+| `${remote.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${var.vpn_cidr}` | value from inherited `vars.yaml` |
 
 ```yaml
 modules:
@@ -160,16 +207,16 @@ modules:
   app_policy:
     source: aws/5/iam-policy
     vars:
-      iam_policy_user_name: ${app_user.user_name}
+      iam_policy_user_name: ${module.app_user.user_name}
       iam_policy_statements:
         - effect: Allow
           actions: [s3:GetObject, s3:PutObject]
           resources:
-            - ${bucket.bucket_arn}
-            - ${bucket.bucket_arn}/*
+            - ${module.bucket.bucket_arn}
+            - ${module.bucket.bucket_arn}/*
 ```
 
-A pure `${x.y}` reference becomes an unquoted Terraform expression (`module.x.y`). A reference embedded in a string becomes an interpolated string (`"${module.x.y}/*"`).
+A pure `${ns.key.field}` reference becomes an unquoted Terraform expression. A reference embedded in a string becomes an interpolated string (`"${module.x.y}/*"`).
 
 ## Cache
 
