@@ -12,11 +12,10 @@ import (
 type Backend map[string]string
 
 type Config struct {
-	ModulesPath string            `yaml:"modules_path"`
-	ModulesRef  string            `yaml:"modules_ref"`
-	Backend     Backend           `yaml:"backend"`
-	Providers   map[string]string `yaml:"providers"` // cloud path segment → registry source URL
-	Root        string            `yaml:"-"`
+	ModulesPath string  `yaml:"modules_path"`
+	ModulesRef  string  `yaml:"modules_ref"`
+	Backend     Backend `yaml:"backend"`
+	Root        string  `yaml:"-"`
 }
 
 // Load walks up from startDir until it finds twig.yaml, then parses it.

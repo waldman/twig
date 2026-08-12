@@ -2,10 +2,13 @@ package generate
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/waldman/twig/internal/config"
 	"github.com/waldman/twig/internal/leaf"
@@ -14,10 +17,16 @@ import (
 
 var crossRefRe = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
+type providerEntry struct {
+	Source string                 `yaml:"source"`
+	Config map[string]interface{} `yaml:"config"`
+}
+
 type providerReq struct {
 	hclName string
 	source  string
 	version string
+	config  map[string]interface{}
 }
 
 // providerHCLName derives the HCL provider name from a registry source URL.
@@ -27,17 +36,26 @@ func providerHCLName(source string) string {
 	return strings.ToLower(parts[len(parts)-1])
 }
 
-// collectProviders scans module sources to determine which providers are needed,
-// derives the version constraint from the <major> path segment, and looks up
-// the registry source URL from cfg.Providers.
-func collectProviders(cfg *config.Config, l *leaf.Leaf) ([]providerReq, error) {
-	if len(cfg.Providers) == 0 {
-		return nil, nil
+// loadProvidersFile reads infra/<cloud>/providers.yaml relative to the project root.
+func loadProvidersFile(root, cloud string) (map[string]providerEntry, error) {
+	path := filepath.Join(root, "infra", cloud, "providers.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("providers.yaml not found for cloud %q (expected at infra/%s/providers.yaml): %w", cloud, cloud, err)
 	}
+	var entries map[string]providerEntry
+	if err := yaml.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return entries, nil
+}
 
-	majors := make(map[string]string) // cloud → major version string
+// collectProviders scans module sources to derive cloud→major version, loads
+// infra/<cloud>/providers.yaml, and builds one providerReq per distinct cloud.
+func collectProviders(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) ([]providerReq, error) {
+	majors := make(map[string]string)
 	for _, key := range l.ModuleKeys {
-		src := l.Modules[key].Source // e.g., "aws/5/vpc"
+		src := l.Modules[key].Source
 		parts := strings.SplitN(src, "/", 3)
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("module %q: source %q does not match <cloud>/<major>/... format", key, src)
@@ -49,6 +67,15 @@ func collectProviders(cfg *config.Config, l *leaf.Leaf) ([]providerReq, error) {
 		majors[cloud] = major
 	}
 
+	if len(majors) == 0 {
+		return nil, nil
+	}
+
+	entries, err := loadProvidersFile(cfg.Root, seg.Cloud)
+	if err != nil {
+		return nil, err
+	}
+
 	clouds := make([]string, 0, len(majors))
 	for cloud := range majors {
 		clouds = append(clouds, cloud)
@@ -57,17 +84,63 @@ func collectProviders(cfg *config.Config, l *leaf.Leaf) ([]providerReq, error) {
 
 	var reqs []providerReq
 	for _, cloud := range clouds {
-		source, ok := cfg.Providers[cloud]
+		entry, ok := entries[cloud]
 		if !ok {
-			return nil, fmt.Errorf("module uses cloud %q but %q is not declared in twig.yaml providers", cloud, cloud)
+			return nil, fmt.Errorf("module uses cloud %q but %q is not declared in infra/%s/providers.yaml", cloud, cloud, seg.Cloud)
 		}
 		reqs = append(reqs, providerReq{
-			hclName: providerHCLName(source),
-			source:  source,
+			hclName: providerHCLName(entry.Source),
+			source:  entry.Source,
 			version: fmt.Sprintf("~> %s.0", majors[cloud]),
+			config:  entry.Config,
 		})
 	}
 	return reqs, nil
+}
+
+func substitutePathVars(s string, seg *pathparse.Segments) string {
+	r := strings.NewReplacer(
+		"${cloud}", seg.Cloud,
+		"${profile}", seg.Profile,
+		"${region}", seg.Region,
+		"${environment}", seg.Environment,
+		"${class}", seg.Class,
+		"${component}", seg.Component,
+	)
+	return r.Replace(s)
+}
+
+func writeProviderBlocks(b *strings.Builder, providers []providerReq, seg *pathparse.Segments) {
+	for _, p := range providers {
+		b.WriteString(fmt.Sprintf("provider %q {\n", p.hclName))
+		keys := make([]string, 0, len(p.config))
+		for k := range p.config {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(fmt.Sprintf("  %s = %s\n", k, providerValToHCL(p.config[k], seg)))
+		}
+		b.WriteString("}\n\n")
+	}
+}
+
+func providerValToHCL(v interface{}, seg *pathparse.Segments) string {
+	switch val := v.(type) {
+	case string:
+		return fmt.Sprintf("%q", substitutePathVars(val, seg))
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case int:
+		return fmt.Sprintf("%d", val)
+	case float64:
+		return fmt.Sprintf("%g", val)
+	default:
+		return fmt.Sprintf("%q", fmt.Sprintf("%v", val))
+	}
 }
 
 // Generate produces the content of main.tf for the given leaf.
@@ -80,7 +153,7 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 		}
 	}
 
-	providers, err := collectProviders(cfg, l)
+	providers, err := collectProviders(cfg, seg, l)
 	if err != nil {
 		return "", err
 	}
@@ -88,6 +161,7 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 	var b strings.Builder
 
 	writeTerraformBlock(&b, cfg, seg, providers)
+	writeProviderBlocks(&b, providers, seg)
 
 	if err := writeRemoteStateBlocks(&b, cfg, l); err != nil {
 		return "", err

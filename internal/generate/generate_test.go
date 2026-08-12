@@ -1,6 +1,8 @@
 package generate
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,10 +20,56 @@ var testSeg = &pathparse.Segments{
 	Component:   "my-app",
 }
 
-var testCfg = &config.Config{
-	ModulesPath: "/modules",
-	Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
-	Root:        "/project",
+var testCfg *config.Config
+
+func TestMain(m *testing.M) {
+	root, err := os.MkdirTemp("", "twig-generate-test-*")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(root)
+
+	// providers.yaml for the aws cloud context used by most tests
+	awsDir := filepath.Join(root, "infra", "aws")
+	if err := os.MkdirAll(awsDir, 0o755); err != nil {
+		panic(err)
+	}
+	awsProviders := `aws:
+  source: hashicorp/aws
+  config:
+    profile: "${profile}"
+    region: "${region}"
+datadog:
+  source: datadog/datadog
+  config:
+    api_key: "test-key"
+`
+	if err := os.WriteFile(filepath.Join(awsDir, "providers.yaml"), []byte(awsProviders), 0o644); err != nil {
+		panic(err)
+	}
+
+	// providers.yaml for the gcp cloud context
+	gcpDir := filepath.Join(root, "infra", "gcp")
+	if err := os.MkdirAll(gcpDir, 0o755); err != nil {
+		panic(err)
+	}
+	gcpProviders := `gcp:
+  source: hashicorp/google
+  config:
+    project: "${profile}"
+    region: "${region}"
+`
+	if err := os.WriteFile(filepath.Join(gcpDir, "providers.yaml"), []byte(gcpProviders), 0o644); err != nil {
+		panic(err)
+	}
+
+	testCfg = &config.Config{
+		ModulesPath: "/modules",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Root:        root,
+	}
+
+	os.Exit(m.Run())
 }
 
 func makeLeaf(keys []string, modules map[string]*leaf.Module) *leaf.Leaf {
@@ -168,7 +216,7 @@ func TestGenerate_gitModuleSource(t *testing.T) {
 		ModulesPath: "github.com/waldman/terraform//modules",
 		ModulesRef:  "v1.0.0",
 		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
-		Root:        "/project",
+		Root:        testCfg.Root,
 	}
 	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{
 		"vpc": {Source: "aws/5/vpc"},
@@ -232,14 +280,8 @@ func TestGenerate_remoteStateBlocks(t *testing.T) {
 }
 
 func TestGenerate_requiredProviders(t *testing.T) {
-	cfg := &config.Config{
-		ModulesPath: "/modules",
-		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
-		Providers:   map[string]string{"aws": "hashicorp/aws"},
-		Root:        "/project",
-	}
 	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
-	out, err := Generate(cfg, testSeg, l)
+	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,85 +290,104 @@ func TestGenerate_requiredProviders(t *testing.T) {
 		`aws = {`,
 		`source  = "hashicorp/aws"`,
 		`version = "~> 5.0"`,
+		`provider "aws"`,
+		`profile = "waldman"`,
+		`region = "us-east-1"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\ngot:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, `provider "aws"`) {
-		t.Error("must not generate a provider block — credentials are caller's responsibility")
-	}
-}
-
-func TestGenerate_noProviders(t *testing.T) {
-	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
-	out, err := Generate(testCfg, testSeg, l)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out, "required_providers") {
-		t.Error("no providers in config → required_providers block must not appear")
-	}
 }
 
 func TestGenerate_gcpProviderHCLName(t *testing.T) {
-	cfg := &config.Config{
-		ModulesPath: "/modules",
-		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
-		Providers:   map[string]string{"gcp": "hashicorp/google"},
-		Root:        "/project",
-	}
 	gcpSeg := &pathparse.Segments{
 		Cloud: "gcp", Profile: "my-project", Region: "us-central1",
 		Environment: "dev", Class: "compute", Component: "web",
 	}
+	gcpCfg := &config.Config{
+		ModulesPath: "/modules",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Root:        testCfg.Root,
+	}
 	l := makeLeaf([]string{"vm"}, map[string]*leaf.Module{"vm": {Source: "gcp/5/compute-instance"}})
-	out, err := Generate(cfg, gcpSeg, l)
+	out, err := Generate(gcpCfg, gcpSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// providers.yaml key is "gcp" but source is hashicorp/google → HCL name is "google"
 	if !strings.Contains(out, `google = {`) {
 		t.Errorf("HCL provider name should be 'google' (last segment of hashicorp/google)\ngot:\n%s", out)
 	}
-	if !strings.Contains(out, `source  = "hashicorp/google"`) {
-		t.Errorf("missing google provider source\ngot:\n%s", out)
+	if !strings.Contains(out, `provider "google"`) {
+		t.Errorf("missing provider google block\ngot:\n%s", out)
+	}
+	if !strings.Contains(out, `project = "my-project"`) {
+		t.Errorf("missing project substitution\ngot:\n%s", out)
 	}
 }
 
-func TestGenerate_missingProvider(t *testing.T) {
-	cfg := &config.Config{
-		ModulesPath: "/modules",
-		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
-		Providers:   map[string]string{"gcp": "hashicorp/google"},
-		Root:        "/project",
-	}
-	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
-	_, err := Generate(cfg, testSeg, l)
+func TestGenerate_missingProviderEntry(t *testing.T) {
+	// providers.yaml for aws exists but has no "nonexistent" entry
+	l := makeLeaf([]string{"x"}, map[string]*leaf.Module{"x": {Source: "nonexistent/5/thing"}})
+	_, err := Generate(testCfg, testSeg, l)
 	if err == nil {
-		t.Fatal("expected error when cloud not in providers map, got nil")
+		t.Fatal("expected error when cloud missing from providers.yaml, got nil")
 	}
-	if !strings.Contains(err.Error(), "aws") {
+	if !strings.Contains(err.Error(), "nonexistent") {
 		t.Errorf("error should mention missing cloud, got: %v", err)
 	}
 }
 
-func TestGenerate_conflictingMajors(t *testing.T) {
-	cfg := &config.Config{
-		ModulesPath: "/modules",
-		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
-		Providers:   map[string]string{"aws": "hashicorp/aws"},
-		Root:        "/project",
+func TestGenerate_missingProvidersFile(t *testing.T) {
+	// cloud path has no providers.yaml
+	noProvSeg := &pathparse.Segments{
+		Cloud: "noproviders", Profile: "p", Region: "r",
+		Environment: "e", Class: "c", Component: "x",
 	}
+	l := makeLeaf([]string{"x"}, map[string]*leaf.Module{"x": {Source: "noproviders/1/thing"}})
+	_, err := Generate(testCfg, noProvSeg, l)
+	if err == nil {
+		t.Fatal("expected error for missing providers.yaml, got nil")
+	}
+	if !strings.Contains(err.Error(), "providers.yaml") {
+		t.Errorf("error should mention providers.yaml, got: %v", err)
+	}
+}
+
+func TestGenerate_conflictingMajors(t *testing.T) {
 	l := makeLeaf([]string{"vpc", "ec2"}, map[string]*leaf.Module{
 		"vpc": {Source: "aws/5/vpc"},
 		"ec2": {Source: "aws/4/ec2"},
 	})
-	_, err := Generate(cfg, testSeg, l)
+	_, err := Generate(testCfg, testSeg, l)
 	if err == nil {
 		t.Fatal("expected error for conflicting major versions, got nil")
 	}
 	if !strings.Contains(err.Error(), "aws") {
 		t.Errorf("error should mention cloud, got: %v", err)
+	}
+}
+
+func TestGenerate_multiProvider(t *testing.T) {
+	// aws + datadog both declared in infra/aws/providers.yaml
+	l := makeLeaf([]string{"ec2", "monitor"}, map[string]*leaf.Module{
+		"ec2":     {Source: "aws/5/ec2"},
+		"monitor": {Source: "datadog/1/monitor"},
+	})
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`provider "aws"`,
+		`provider "datadog"`,
+		`aws = {`,
+		`datadog = {`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
 	}
 }
 

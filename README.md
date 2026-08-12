@@ -43,9 +43,6 @@ Place a `twig.yaml` at the root of your project (beside the `infra/` directory):
 modules_path: github.com/your-org/terraform-modules//modules
 modules_ref:  v1.0.0
 
-providers:
-  aws: hashicorp/aws
-
 backend:
   bucket: my-terraform-state
   region: us-east-1
@@ -54,7 +51,6 @@ backend:
 
 - `modules_path` — path to your Terraform modules. Accepts a local path (relative to `twig.yaml` or absolute) or a git URL (see below).
 - `modules_ref` — git ref (tag, branch, or commit SHA) to pin when `modules_path` is a git URL. Omit to use HEAD.
-- `providers` — map of `cloud` path segment → Terraform registry source URL. twig reads the `<major>` version from each module's source path to generate the `required_providers` version constraint. Omit if your modules declare their own `required_providers`.
 - `backend` — S3 backend config; `key` is always derived from the leaf path and must not be set here.
 - Override `modules_path` at runtime with `TWIG_MODULES_PATH`.
 
@@ -122,16 +118,25 @@ twig state  infra/aws/myprofile/us-east-1/dev/ec2/web.yaml -- mv module.ec2.aws_
 
 ## Providers
 
-twig generates a `required_providers` block in `terraform {}` when `providers:` is set in `twig.yaml`. The version constraint is derived from the `<major>` segment of each module's source path — so `aws/5/vpc` produces `~> 5.0` for `hashicorp/aws`.
+twig reads `infra/<cloud>/providers.yaml` alongside your leaf tree to generate the `required_providers` block and `provider {}` blocks. The version constraint is derived from the `<major>` segment of each module's source path (`aws/5/vpc` → `~> 5.0`). The HCL provider name is derived from the last segment of the registry source URL (`hashicorp/google` → `google`).
 
 ```yaml
-providers:
-  aws:          hashicorp/aws
-  gcp:          hashicorp/google
-  digitalocean: digitalocean/digitalocean
+# infra/aws/providers.yaml
+aws:
+  source: hashicorp/aws
+  config:
+    profile: "${profile}"
+    region:  "${region}"
+
+datadog:
+  source: datadog/datadog
+  config:
+    api_key: "my-api-key"
 ```
 
-twig does **not** generate `provider {}` blocks. Configure credentials via the standard env vars each provider supports (`AWS_PROFILE`, `GOOGLE_CREDENTIALS`, `DIGITALOCEAN_TOKEN`, etc.) or via provider-level configuration in a `provider.tf` you manage alongside your modules.
+Keys match the `<cloud>` segment used in module source paths (`aws/5/vpc`, `datadog/1/monitor`). Values in `config` may reference path segments via `${profile}`, `${region}`, `${environment}`, `${cloud}`, `${class}`, or `${component}`. Multiple providers can coexist in the same file — a leaf that uses both `aws` and `datadog` modules will generate both blocks from a single `infra/aws/providers.yaml`.
+
+twig errors if `providers.yaml` is missing for a leaf's cloud.
 
 ## Leaf file format
 
