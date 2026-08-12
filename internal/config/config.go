@@ -15,8 +15,7 @@ type Config struct {
 	ModulesPath string  `yaml:"modules_path"`
 	ModulesRef  string  `yaml:"modules_ref"`
 	Backend     Backend `yaml:"backend"`
-	// absolute path to the directory containing twig.yaml
-	Root string `yaml:"-"`
+	Root        string  `yaml:"-"`
 }
 
 // Load walks up from startDir until it finds twig.yaml, then parses it.

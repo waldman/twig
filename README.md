@@ -29,7 +29,7 @@ Seven variables are automatically derived and injected into every module call:
 ## Requirements
 
 - [Terraform](https://developer.hashicorp.com/terraform/install) in `$PATH`
-- AWS credentials configured (profile or environment variables)
+- Cloud credentials configured (see [Supported clouds](#supported-clouds))
 
 ## Install
 
@@ -105,12 +105,38 @@ twig <command> <leaf-file> [-- <terraform-flags>...]
 | `twig plan <leaf>` | Generate + auto-init + `terraform plan` |
 | `twig apply <leaf>` | Generate + auto-init + `terraform apply` |
 | `twig destroy <leaf>` | Generate + auto-init + `terraform destroy` |
+| `twig output <leaf>` | Generate + auto-init + `terraform output` |
+| `twig state <leaf>` | Generate + auto-init + `terraform state <subcmd>` |
 
 Pass flags through to Terraform after `--`:
 
 ```
 twig apply infra/aws/myprofile/us-east-1/production/services/my-app.yaml -- -auto-approve
+twig output infra/aws/myprofile/us-east-1/production/services/my-app.yaml -- -json
+twig state  infra/aws/myprofile/us-east-1/dev/ec2/web.yaml -- mv module.ec2.aws_security_group.this module.sg.aws_security_group.this
 ```
+
+## Providers
+
+twig reads `infra/<cloud>/providers.yaml` alongside your leaf tree to generate the `required_providers` block and `provider {}` blocks. The version constraint is derived from the `<major>` segment of each module's source path (`aws/5/vpc` → `~> 5.0`). The HCL provider name is derived from the last segment of the registry source URL (`hashicorp/google` → `google`).
+
+```yaml
+# infra/aws/providers.yaml
+aws:
+  source: hashicorp/aws
+  config:
+    profile: "${profile}"
+    region:  "${region}"
+
+datadog:
+  source: datadog/datadog
+  config:
+    api_key: "my-api-key"
+```
+
+Keys match the `<cloud>` segment used in module source paths (`aws/5/vpc`, `datadog/1/monitor`). Values in `config` may reference path segments via `${profile}`, `${region}`, `${environment}`, `${cloud}`, `${class}`, or `${component}`. Multiple providers can coexist in the same file — a leaf that uses both `aws` and `datadog` modules will generate both blocks from a single `infra/aws/providers.yaml`.
+
+twig errors if `providers.yaml` is missing for a leaf's cloud.
 
 ## Leaf file format
 
