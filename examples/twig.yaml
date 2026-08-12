@@ -1,5 +1,5 @@
 modules_path: github.com/waldman/twig-infra-example//modules
-modules_ref:  v1.1.0
+modules_ref:  v1.2.0
 
 backend:
   bucket:         my-terraform-state
