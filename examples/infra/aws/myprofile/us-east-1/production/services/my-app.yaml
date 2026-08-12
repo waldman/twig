@@ -1,3 +1,7 @@
+#
+# my-app.yaml
+#
+
 modules:
   # S3 bucket for application state
   bucket:
