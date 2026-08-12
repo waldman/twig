@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/waldman/twig/internal/pathparse"
 )
 
 func writeLeaf(t *testing.T, content string) string {
@@ -133,5 +135,92 @@ modules:
 	_, err := Load(path)
 	if err == nil {
 		t.Fatal("expected error for alias/module key conflict, got nil")
+	}
+}
+
+// helpers for LoadInheritedVars tests
+
+func makeInfraTree(t *testing.T) (root string, seg *pathparse.Segments) {
+	t.Helper()
+	root = t.TempDir()
+	seg = &pathparse.Segments{
+		Cloud: "aws", Profile: "myprofile", Region: "us-east-1",
+		Environment: "production", Class: "services", Component: "app",
+	}
+	return root, seg
+}
+
+func writeVarsYAML(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "vars.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadInheritedVars_noFiles(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	vars, err := LoadInheritedVars(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vars) != 0 {
+		t.Errorf("expected empty map, got %v", vars)
+	}
+}
+
+func TestLoadInheritedVars_singleLevel(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "cost_center: engineering\n")
+
+	vars, err := LoadInheritedVars(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vars["cost_center"] != "engineering" {
+		t.Errorf("expected cost_center=engineering, got %v", vars["cost_center"])
+	}
+}
+
+func TestLoadInheritedVars_lowerWins(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra"), "tier: base\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1", "production"), "tier: prod-override\n")
+
+	vars, err := LoadInheritedVars(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vars["tier"] != "prod-override" {
+		t.Errorf("expected lower level to win, got %v", vars["tier"])
+	}
+}
+
+func TestLoadInheritedVars_mergeAcrossLevels(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra"), "cost_center: engineering\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"), "vpc_id: vpc-abc123\n")
+
+	vars, err := LoadInheritedVars(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vars["cost_center"] != "engineering" {
+		t.Errorf("expected cost_center from root level, got %v", vars["cost_center"])
+	}
+	if vars["vpc_id"] != "vpc-abc123" {
+		t.Errorf("expected vpc_id from region level, got %v", vars["vpc_id"])
+	}
+}
+
+func TestLoadInheritedVars_reservedVarRejected(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "region: us-west-2\n")
+
+	_, err := LoadInheritedVars(root, seg)
+	if err == nil {
+		t.Fatal("expected error for reserved var name, got nil")
 	}
 }

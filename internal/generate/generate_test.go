@@ -437,6 +437,57 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 	}
 }
 
+func TestGenerate_inheritedVars(t *testing.T) {
+	// Write a vars.yaml at the cloud level for this test
+	cloudDir := filepath.Join(testCfg.Root, "infra", "aws")
+	if err := os.WriteFile(filepath.Join(cloudDir, "vars.yaml"), []byte("cost_center: engineering\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(filepath.Join(cloudDir, "vars.yaml")) })
+
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.InheritedVars = map[string]interface{}{"cost_center": "engineering"}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `cost_center = "engineering"`) {
+		t.Errorf("inherited var missing from output:\n%s", out)
+	}
+}
+
+func TestGenerate_inheritedVarsModuleWins(t *testing.T) {
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
+		"ec2": {Source: "aws/5/ec2", Vars: map[string]interface{}{"cost_center": "override"}},
+	})
+	l.InheritedVars = map[string]interface{}{"cost_center": "inherited"}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `cost_center = "override"`) {
+		t.Errorf("module var should override inherited:\n%s", out)
+	}
+	if strings.Contains(out, `cost_center = "inherited"`) {
+		t.Errorf("inherited value should be overridden:\n%s", out)
+	}
+}
+
+func TestGenerate_inheritedVarsCrossRefRejected(t *testing.T) {
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.InheritedVars = map[string]interface{}{"bad": "${ec2.output}"}
+
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil {
+		t.Fatal("expected error for cross-ref in inherited vars, got nil")
+	}
+	if !strings.Contains(err.Error(), "cross-references") {
+		t.Errorf("error should mention cross-references, got: %v", err)
+	}
+}
+
 func TestGenerate_remoteStateBlocksBeforeModules(t *testing.T) {
 	l := &leaf.Leaf{
 		ModuleKeys: []string{"ec2"},

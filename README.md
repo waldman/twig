@@ -138,6 +138,33 @@ Keys match the `<cloud>` segment used in module source paths (`aws/5/vpc`, `data
 
 twig errors if `providers.yaml` is missing for a leaf's cloud.
 
+## Inherited variables
+
+Place a `vars.yaml` at any directory level under `infra/` to inject variables into every module in leaves below that point:
+
+```
+infra/vars.yaml                                          ← all clouds
+infra/aws/vars.yaml                                      ← all AWS leaves
+infra/aws/myprofile/us-east-1/vars.yaml                  ← all leaves in this region
+infra/aws/myprofile/us-east-1/production/vars.yaml       ← all production leaves
+infra/aws/myprofile/us-east-1/production/services/vars.yaml  ← all service leaves
+```
+
+Example:
+
+```yaml
+# infra/aws/vars.yaml
+cost_center: engineering
+default_tags:
+  ManagedBy: twig
+```
+
+Merge rules:
+- Lower levels (closer to the leaf) override higher levels.
+- Module-level `vars:` in the leaf always override inherited values.
+- Reserved path variable names (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) are rejected at load time.
+- Cross-references (`${x.y}`) are not supported in `vars.yaml`.
+
 ## Leaf file format
 
 ```yaml

@@ -147,6 +147,10 @@ func providerValToHCL(v interface{}, seg *pathparse.Segments) string {
 func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string, error) {
 	resolve := makeResolver(l.Modules, l.RemoteState)
 
+	if err := validateInheritedVars(l.InheritedVars); err != nil {
+		return "", err
+	}
+
 	for _, key := range l.ModuleKeys {
 		if err := validateRefs(key, l.Modules[key].Vars, l.Modules, l.RemoteState); err != nil {
 			return "", err
@@ -168,12 +172,18 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 	}
 
 	for _, key := range l.ModuleKeys {
-		if err := writeModuleBlock(&b, key, l.Modules[key], seg, cfg, resolve); err != nil {
+		if err := writeModuleBlock(&b, key, l.Modules[key], l.InheritedVars, seg, cfg, resolve); err != nil {
 			return "", err
 		}
 	}
 
 	return b.String(), nil
+}
+
+func validateInheritedVars(vars map[string]interface{}) error {
+	return walkRefs(vars, func(ref, field string) error {
+		return fmt.Errorf("inherited vars: cross-references (${%s.%s}) are not supported in vars.yaml", ref, field)
+	})
 }
 
 // makeResolver returns a function that maps (alias, field) to the correct HCL
@@ -247,7 +257,7 @@ func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf
 	return nil
 }
 
-func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, seg *pathparse.Segments, cfg *config.Config, resolve func(string, string) string) error {
+func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inherited map[string]interface{}, seg *pathparse.Segments, cfg *config.Config, resolve func(string, string) string) error {
 	srcPath := cfg.ModuleSource(mod.Source)
 
 	b.WriteString(fmt.Sprintf("module %q {\n", key))
@@ -261,15 +271,24 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, seg *pat
 	b.WriteString(fmt.Sprintf("  component   = %q\n", seg.Component))
 	b.WriteString(fmt.Sprintf("  module      = %q\n", key))
 
-	if len(mod.Vars) > 0 {
+	// Merge inherited vars and module vars; module vars override inherited.
+	allVars := make(map[string]interface{}, len(inherited)+len(mod.Vars))
+	for k, v := range inherited {
+		allVars[k] = v
+	}
+	for k, v := range mod.Vars {
+		allVars[k] = v
+	}
+
+	if len(allVars) > 0 {
 		b.WriteString("\n")
-		keys := make([]string, 0, len(mod.Vars))
-		for k := range mod.Vars {
+		keys := make([]string, 0, len(allVars))
+		for k := range allVars {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			hcl, err := toHCL(mod.Vars[k], resolve)
+			hcl, err := toHCL(allVars[k], resolve)
 			if err != nil {
 				return fmt.Errorf("module %q var %q: %w", key, k, err)
 			}

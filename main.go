@@ -78,6 +78,11 @@ func run(args []string) error {
 		return err
 	}
 
+	l.InheritedVars, err = leaf.LoadInheritedVars(cfg.Root, seg)
+	if err != nil {
+		return err
+	}
+
 	if !cfg.IsGitSource() {
 		for _, key := range l.ModuleKeys {
 			srcPath := filepath.Join(cfg.ModulesRoot(), l.Modules[key].Source)
