@@ -231,71 +231,102 @@ func TestGenerate_remoteStateBlocks(t *testing.T) {
 	}
 }
 
-func TestGenerate_awsProviderBlock(t *testing.T) {
+func TestGenerate_requiredProviders(t *testing.T) {
+	cfg := &config.Config{
+		ModulesPath: "/modules",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Providers:   map[string]string{"aws": "hashicorp/aws"},
+		Root:        "/project",
+	}
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`required_providers`,
+		`aws = {`,
+		`source  = "hashicorp/aws"`,
+		`version = "~> 5.0"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `provider "aws"`) {
+		t.Error("must not generate a provider block — credentials are caller's responsibility")
+	}
+}
+
+func TestGenerate_noProviders(t *testing.T) {
 	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
 	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `provider "aws"`) {
-		t.Error("missing aws provider block")
-	}
-	if !strings.Contains(out, `profile = "waldman"`) {
-		t.Error("missing profile")
-	}
 	if strings.Contains(out, "required_providers") {
-		t.Error("required_providers must not appear in generated output — modules own it")
+		t.Error("no providers in config → required_providers block must not appear")
 	}
 }
 
-func TestGenerate_gcpProviderBlock(t *testing.T) {
+func TestGenerate_gcpProviderHCLName(t *testing.T) {
+	cfg := &config.Config{
+		ModulesPath: "/modules",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Providers:   map[string]string{"gcp": "hashicorp/google"},
+		Root:        "/project",
+	}
 	gcpSeg := &pathparse.Segments{
 		Cloud: "gcp", Profile: "my-project", Region: "us-central1",
 		Environment: "dev", Class: "compute", Component: "web",
 	}
 	l := makeLeaf([]string{"vm"}, map[string]*leaf.Module{"vm": {Source: "gcp/5/compute-instance"}})
-	out, err := Generate(testCfg, gcpSeg, l)
+	out, err := Generate(cfg, gcpSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `provider "google"`) {
-		t.Error("missing google provider block")
+	if !strings.Contains(out, `google = {`) {
+		t.Errorf("HCL provider name should be 'google' (last segment of hashicorp/google)\ngot:\n%s", out)
 	}
-	if !strings.Contains(out, `project = "my-project"`) {
-		t.Error("missing project")
-	}
-	if !strings.Contains(out, `region  = "us-central1"`) {
-		t.Error("missing region")
+	if !strings.Contains(out, `source  = "hashicorp/google"`) {
+		t.Errorf("missing google provider source\ngot:\n%s", out)
 	}
 }
 
-func TestGenerate_digitaloceanProviderBlock(t *testing.T) {
-	doSeg := &pathparse.Segments{
-		Cloud: "digitalocean", Profile: "myteam", Region: "nyc3",
-		Environment: "prod", Class: "droplet", Component: "web",
+func TestGenerate_missingProvider(t *testing.T) {
+	cfg := &config.Config{
+		ModulesPath: "/modules",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Providers:   map[string]string{"gcp": "hashicorp/google"},
+		Root:        "/project",
 	}
-	l := makeLeaf([]string{"droplet"}, map[string]*leaf.Module{"droplet": {Source: "digitalocean/2/droplet"}})
-	out, err := Generate(testCfg, doSeg, l)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, `provider "digitalocean"`) {
-		t.Error("missing digitalocean provider block")
-	}
-}
-
-func TestGenerate_unknownCloud(t *testing.T) {
-	badSeg := &pathparse.Segments{
-		Cloud: "azure", Profile: "myprofile", Region: "eastus",
-		Environment: "dev", Class: "vm", Component: "web",
-	}
-	l := makeLeaf([]string{"vm"}, map[string]*leaf.Module{"vm": {Source: "azure/3/vm"}})
-	_, err := Generate(testCfg, badSeg, l)
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
+	_, err := Generate(cfg, testSeg, l)
 	if err == nil {
-		t.Fatal("expected error for unsupported cloud, got nil")
+		t.Fatal("expected error when cloud not in providers map, got nil")
 	}
-	if !strings.Contains(err.Error(), "azure") {
-		t.Errorf("error should mention unsupported cloud, got: %v", err)
+	if !strings.Contains(err.Error(), "aws") {
+		t.Errorf("error should mention missing cloud, got: %v", err)
+	}
+}
+
+func TestGenerate_conflictingMajors(t *testing.T) {
+	cfg := &config.Config{
+		ModulesPath: "/modules",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Providers:   map[string]string{"aws": "hashicorp/aws"},
+		Root:        "/project",
+	}
+	l := makeLeaf([]string{"vpc", "ec2"}, map[string]*leaf.Module{
+		"vpc": {Source: "aws/5/vpc"},
+		"ec2": {Source: "aws/4/ec2"},
+	})
+	_, err := Generate(cfg, testSeg, l)
+	if err == nil {
+		t.Fatal("expected error for conflicting major versions, got nil")
+	}
+	if !strings.Contains(err.Error(), "aws") {
+		t.Errorf("error should mention cloud, got: %v", err)
 	}
 }
 

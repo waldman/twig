@@ -43,6 +43,9 @@ Place a `twig.yaml` at the root of your project (beside the `infra/` directory):
 modules_path: github.com/your-org/terraform-modules//modules
 modules_ref:  v1.0.0
 
+providers:
+  aws: hashicorp/aws
+
 backend:
   bucket: my-terraform-state
   region: us-east-1
@@ -51,6 +54,7 @@ backend:
 
 - `modules_path` — path to your Terraform modules. Accepts a local path (relative to `twig.yaml` or absolute) or a git URL (see below).
 - `modules_ref` — git ref (tag, branch, or commit SHA) to pin when `modules_path` is a git URL. Omit to use HEAD.
+- `providers` — map of `cloud` path segment → Terraform registry source URL. twig reads the `<major>` version from each module's source path to generate the `required_providers` version constraint. Omit if your modules declare their own `required_providers`.
 - `backend` — S3 backend config; `key` is always derived from the leaf path and must not be set here.
 - Override `modules_path` at runtime with `TWIG_MODULES_PATH`.
 
@@ -116,15 +120,18 @@ twig output infra/aws/myprofile/us-east-1/production/services/my-app.yaml -- -js
 twig state  infra/aws/myprofile/us-east-1/dev/ec2/web.yaml -- mv module.ec2.aws_security_group.this module.sg.aws_security_group.this
 ```
 
-## Supported clouds
+## Providers
 
-The `cloud` path segment determines the provider block twig generates. Modules own their own `required_providers` version constraint via `versions.tf`; twig only wires up credentials and region.
+twig generates a `required_providers` block in `terraform {}` when `providers:` is set in `twig.yaml`. The version constraint is derived from the `<major>` segment of each module's source path — so `aws/5/vpc` produces `~> 5.0` for `hashicorp/aws`.
 
-| `cloud` | Provider | Credential source |
-|---|---|---|
-| `aws` | `hashicorp/aws` | `profile` path segment → `~/.aws/credentials` section |
-| `gcp` | `hashicorp/google` | `profile` path segment → GCP project ID; creds via `GOOGLE_CREDENTIALS` env var or ADC |
-| `digitalocean` | `digitalocean/digitalocean` | `DIGITALOCEAN_TOKEN` env var |
+```yaml
+providers:
+  aws:          hashicorp/aws
+  gcp:          hashicorp/google
+  digitalocean: digitalocean/digitalocean
+```
+
+twig does **not** generate `provider {}` blocks. Configure credentials via the standard env vars each provider supports (`AWS_PROFILE`, `GOOGLE_CREDENTIALS`, `DIGITALOCEAN_TOKEN`, etc.) or via provider-level configuration in a `provider.tf` you manage alongside your modules.
 
 ## Leaf file format
 

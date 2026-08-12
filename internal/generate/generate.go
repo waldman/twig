@@ -14,6 +14,62 @@ import (
 
 var crossRefRe = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
+type providerReq struct {
+	hclName string
+	source  string
+	version string
+}
+
+// providerHCLName derives the HCL provider name from a registry source URL.
+// "hashicorp/aws" → "aws", "hashicorp/google" → "google", "digitalocean/digitalocean" → "digitalocean"
+func providerHCLName(source string) string {
+	parts := strings.Split(source, "/")
+	return strings.ToLower(parts[len(parts)-1])
+}
+
+// collectProviders scans module sources to determine which providers are needed,
+// derives the version constraint from the <major> path segment, and looks up
+// the registry source URL from cfg.Providers.
+func collectProviders(cfg *config.Config, l *leaf.Leaf) ([]providerReq, error) {
+	if len(cfg.Providers) == 0 {
+		return nil, nil
+	}
+
+	majors := make(map[string]string) // cloud → major version string
+	for _, key := range l.ModuleKeys {
+		src := l.Modules[key].Source // e.g., "aws/5/vpc"
+		parts := strings.SplitN(src, "/", 3)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("module %q: source %q does not match <cloud>/<major>/... format", key, src)
+		}
+		cloud, major := parts[0], parts[1]
+		if prev, ok := majors[cloud]; ok && prev != major {
+			return nil, fmt.Errorf("module %q: conflicting provider major versions for %q: %s and %s", key, cloud, prev, major)
+		}
+		majors[cloud] = major
+	}
+
+	clouds := make([]string, 0, len(majors))
+	for cloud := range majors {
+		clouds = append(clouds, cloud)
+	}
+	sort.Strings(clouds)
+
+	var reqs []providerReq
+	for _, cloud := range clouds {
+		source, ok := cfg.Providers[cloud]
+		if !ok {
+			return nil, fmt.Errorf("module uses cloud %q but %q is not declared in twig.yaml providers", cloud, cloud)
+		}
+		reqs = append(reqs, providerReq{
+			hclName: providerHCLName(source),
+			source:  source,
+			version: fmt.Sprintf("~> %s.0", majors[cloud]),
+		})
+	}
+	return reqs, nil
+}
+
 // Generate produces the content of main.tf for the given leaf.
 func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string, error) {
 	resolve := makeResolver(l.Modules, l.RemoteState)
@@ -24,12 +80,14 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 		}
 	}
 
-	var b strings.Builder
-
-	writeTerraformBlock(&b, cfg, seg)
-	if err := writeProviderBlock(&b, seg); err != nil {
+	providers, err := collectProviders(cfg, l)
+	if err != nil {
 		return "", err
 	}
+
+	var b strings.Builder
+
+	writeTerraformBlock(&b, cfg, seg, providers)
 
 	if err := writeRemoteStateBlocks(&b, cfg, l); err != nil {
 		return "", err
@@ -55,9 +113,21 @@ func makeResolver(modules map[string]*leaf.Module, remoteState map[string]string
 	}
 }
 
-func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.Segments) {
+func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.Segments, providers []providerReq) {
 	b.WriteString("terraform {\n")
 	b.WriteString("  required_version = \">= 1.1\"\n")
+
+	if len(providers) > 0 {
+		b.WriteString("  required_providers {\n")
+		for _, p := range providers {
+			b.WriteString(fmt.Sprintf("    %s = {\n", p.hclName))
+			b.WriteString(fmt.Sprintf("      source  = %q\n", p.source))
+			b.WriteString(fmt.Sprintf("      version = %q\n", p.version))
+			b.WriteString("    }\n")
+		}
+		b.WriteString("  }\n")
+	}
+
 	b.WriteString("  backend \"s3\" {\n")
 
 	keys := make([]string, 0, len(cfg.Backend))
@@ -71,29 +141,6 @@ func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.
 	b.WriteString(fmt.Sprintf("    %-16s= %q\n", "key", seg.StateKey()))
 	b.WriteString("  }\n")
 	b.WriteString("}\n\n")
-}
-
-func writeProviderBlock(b *strings.Builder, seg *pathparse.Segments) error {
-	switch seg.Cloud {
-	case "aws":
-		b.WriteString("provider \"aws\" {\n")
-		b.WriteString(fmt.Sprintf("  profile = %q\n", seg.Profile))
-		b.WriteString(fmt.Sprintf("  region  = %q\n", seg.Region))
-		b.WriteString("}\n\n")
-	case "gcp":
-		// project = profile path segment; credentials via GOOGLE_CREDENTIALS env var or ADC.
-		b.WriteString("provider \"google\" {\n")
-		b.WriteString(fmt.Sprintf("  project = %q\n", seg.Profile))
-		b.WriteString(fmt.Sprintf("  region  = %q\n", seg.Region))
-		b.WriteString("}\n\n")
-	case "digitalocean":
-		// token via DIGITALOCEAN_TOKEN env var.
-		b.WriteString("provider \"digitalocean\" {\n")
-		b.WriteString("}\n\n")
-	default:
-		return fmt.Errorf("unsupported cloud %q: supported values are aws, gcp, digitalocean", seg.Cloud)
-	}
-	return nil
 }
 
 func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf) error {

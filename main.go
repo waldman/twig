@@ -29,8 +29,6 @@ Commands:
 
 The leaf file must be a .yaml file at:
   infra/<cloud>/<profile>/<region>/<environment>/<class>/<component>.yaml
-
-Supported clouds: aws, gcp, digitalocean
 `
 
 func main() {
