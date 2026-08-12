@@ -76,6 +76,18 @@ func TestLoad_reservedVar(t *testing.T) {
 	}
 }
 
+func TestLoad_reservedInstanceKey(t *testing.T) {
+	for _, key := range []string{"module", "remote", "var"} {
+		t.Run(key, func(t *testing.T) {
+			path := writeLeaf(t, "modules:\n  "+key+":\n    source: aws/5/x\n")
+			_, err := Load(path)
+			if err == nil {
+				t.Fatalf("expected error for reserved instance key %q, got nil", key)
+			}
+		})
+	}
+}
+
 func TestLoad_missingSource(t *testing.T) {
 	path := writeLeaf(t, `
 modules:

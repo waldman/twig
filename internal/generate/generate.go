@@ -15,7 +15,11 @@ import (
 	"github.com/waldman/twig/internal/pathparse"
 )
 
-var crossRefRe = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
+// refRe matches the three explicit ref forms:
+//   ${module.ec2.vpc_id}   → ns=module, key=ec2,  field=vpc_id
+//   ${remote.vpc.vpc_id}   → ns=remote, key=vpc,  field=vpc_id
+//   ${var.vpn_cidr}        → ns=var,    key=vpn_cidr, field=""
+var refRe = regexp.MustCompile(`\$\{(module|remote|var)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
 
 type providerEntry struct {
 	Source string                 `yaml:"source"`
@@ -152,7 +156,7 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 	}
 
 	for _, key := range l.ModuleKeys {
-		if err := validateRefs(key, l.Modules[key].Vars, l.Modules, l.RemoteState); err != nil {
+		if err := validateRefs(key, l.Modules[key].Vars, l.Modules, l.RemoteState, l.InheritedVars); err != nil {
 			return "", err
 		}
 	}
@@ -181,19 +185,21 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 }
 
 func validateInheritedVars(vars map[string]interface{}) error {
-	return walkRefs(vars, func(ref, field string) error {
-		return fmt.Errorf("inherited vars: cross-references (${%s.%s}) are not supported in vars.yaml", ref, field)
+	return walkRefs(vars, func(ns, key, field string) error {
+		return fmt.Errorf("inherited vars: references (${%s.%s...}) are not supported in vars.yaml", ns, key)
 	})
 }
 
-// makeResolver returns a function that maps (alias, field) to the correct HCL
-// expression — module ref for module keys, remote state ref for remote_state aliases.
-func makeResolver(modules map[string]*leaf.Module, remoteState map[string]string) func(string, string) string {
-	return func(alias, field string) string {
-		if _, ok := remoteState[alias]; ok {
-			return "data.terraform_remote_state." + alias + ".outputs." + field
+// makeResolver returns a function that maps (ns, key, field) to the correct HCL
+// expression for module and remote namespaces.
+func makeResolver(modules map[string]*leaf.Module, remoteState map[string]string) func(string, string, string) string {
+	return func(ns, key, field string) string {
+		switch ns {
+		case "remote":
+			return "data.terraform_remote_state." + key + ".outputs." + field
+		default: // "module"
+			return "module." + key + "." + field
 		}
-		return "module." + alias + "." + field
 	}
 }
 
@@ -257,7 +263,7 @@ func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf
 	return nil
 }
 
-func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inherited map[string]interface{}, seg *pathparse.Segments, cfg *config.Config, resolve func(string, string) string) error {
+func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inherited map[string]interface{}, seg *pathparse.Segments, cfg *config.Config, resolve func(string, string, string) string) error {
 	srcPath := cfg.ModuleSource(mod.Source)
 
 	b.WriteString(fmt.Sprintf("module %q {\n", key))
@@ -288,7 +294,7 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inherite
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			hcl, err := toHCL(allVars[k], resolve)
+			hcl, err := toHCL(allVars[k], resolve, inherited)
 			if err != nil {
 				return fmt.Errorf("module %q var %q: %w", key, k, err)
 			}
@@ -300,10 +306,10 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inherite
 	return nil
 }
 
-func toHCL(v interface{}, resolve func(string, string) string) (string, error) {
+func toHCL(v interface{}, resolve func(string, string, string) string, inherited map[string]interface{}) (string, error) {
 	switch val := v.(type) {
 	case string:
-		return stringToHCL(val, resolve), nil
+		return stringToHCL(val, resolve, inherited), nil
 	case bool:
 		if val {
 			return "true", nil
@@ -314,9 +320,9 @@ func toHCL(v interface{}, resolve func(string, string) string) (string, error) {
 	case float64:
 		return fmt.Sprintf("%g", val), nil
 	case []interface{}:
-		return sliceToHCL(val, resolve)
+		return sliceToHCL(val, resolve, inherited)
 	case map[string]interface{}:
-		return mapToHCL(val, resolve)
+		return mapToHCL(val, resolve, inherited)
 	case nil:
 		return "null", nil
 	default:
@@ -324,24 +330,36 @@ func toHCL(v interface{}, resolve func(string, string) string) (string, error) {
 	}
 }
 
-func stringToHCL(s string, resolve func(string, string) string) string {
-	// pure reference: entire string is exactly one ${x.y} token
-	if m := crossRefRe.FindStringSubmatch(s); m != nil && m[0] == s {
-		return resolve(m[1], m[2])
+func stringToHCL(s string, resolve func(string, string, string) string, inherited map[string]interface{}) string {
+	// pure reference: entire string is exactly one ref token
+	if m := refRe.FindStringSubmatch(s); m != nil && m[0] == s {
+		ns, key, field := m[1], m[2], m[3]
+		if ns == "var" {
+			hcl, err := toHCL(inherited[key], resolve, inherited)
+			if err != nil {
+				return fmt.Sprintf("%q", fmt.Sprintf("%v", inherited[key]))
+			}
+			return hcl
+		}
+		return resolve(ns, key, field)
 	}
 
-	// mixed or plain string — substitute refs and emit as quoted HCL
-	resolved := crossRefRe.ReplaceAllStringFunc(s, func(match string) string {
-		sub := crossRefRe.FindStringSubmatch(match)
-		return "${" + resolve(sub[1], sub[2]) + "}"
+	// mixed or plain string — substitute refs inline and emit as quoted HCL
+	result := refRe.ReplaceAllStringFunc(s, func(match string) string {
+		sub := refRe.FindStringSubmatch(match)
+		ns, key, field := sub[1], sub[2], sub[3]
+		if ns == "var" {
+			return fmt.Sprintf("%v", inherited[key])
+		}
+		return "${" + resolve(ns, key, field) + "}"
 	})
-	return fmt.Sprintf("%q", resolved)
+	return fmt.Sprintf("%q", result)
 }
 
-func sliceToHCL(items []interface{}, resolve func(string, string) string) (string, error) {
+func sliceToHCL(items []interface{}, resolve func(string, string, string) string, inherited map[string]interface{}) (string, error) {
 	var parts []string
 	for _, item := range items {
-		h, err := toHCL(item, resolve)
+		h, err := toHCL(item, resolve, inherited)
 		if err != nil {
 			return "", err
 		}
@@ -350,7 +368,7 @@ func sliceToHCL(items []interface{}, resolve func(string, string) string) (strin
 	return "[\n    " + strings.Join(parts, ",\n    ") + ",\n  ]", nil
 }
 
-func mapToHCL(m map[string]interface{}, resolve func(string, string) string) (string, error) {
+func mapToHCL(m map[string]interface{}, resolve func(string, string, string) string, inherited map[string]interface{}) (string, error) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -359,7 +377,7 @@ func mapToHCL(m map[string]interface{}, resolve func(string, string) string) (st
 
 	var lines []string
 	for _, k := range keys {
-		h, err := toHCL(m[k], resolve)
+		h, err := toHCL(m[k], resolve, inherited)
 		if err != nil {
 			return "", err
 		}
@@ -368,23 +386,31 @@ func mapToHCL(m map[string]interface{}, resolve func(string, string) string) (st
 	return "{\n" + strings.Join(lines, "\n") + "\n    }", nil
 }
 
-func validateRefs(moduleKey string, vars map[string]interface{}, modules map[string]*leaf.Module, remoteState map[string]string) error {
-	return walkRefs(vars, func(ref, field string) error {
-		if _, ok := modules[ref]; ok {
-			return nil
+func validateRefs(moduleKey string, vars map[string]interface{}, modules map[string]*leaf.Module, remoteState map[string]string, inherited map[string]interface{}) error {
+	return walkRefs(vars, func(ns, key, field string) error {
+		switch ns {
+		case "module":
+			if _, ok := modules[key]; !ok {
+				return fmt.Errorf("module %q: ${module.%s.%s} references undeclared module %q", moduleKey, key, field, key)
+			}
+		case "remote":
+			if _, ok := remoteState[key]; !ok {
+				return fmt.Errorf("module %q: ${remote.%s.%s} references undeclared remote_state alias %q", moduleKey, key, field, key)
+			}
+		case "var":
+			if _, ok := inherited[key]; !ok {
+				return fmt.Errorf("module %q: ${var.%s} references undeclared inherited variable %q", moduleKey, key, key)
+			}
 		}
-		if _, ok := remoteState[ref]; ok {
-			return nil
-		}
-		return fmt.Errorf("module %q: cross-ref ${%s.%s} references undeclared instance or remote state %q", moduleKey, ref, field, ref)
+		return nil
 	})
 }
 
-func walkRefs(v interface{}, fn func(ref, field string) error) error {
+func walkRefs(v interface{}, fn func(ns, key, field string) error) error {
 	switch val := v.(type) {
 	case string:
-		for _, m := range crossRefRe.FindAllStringSubmatch(val, -1) {
-			if err := fn(m[1], m[2]); err != nil {
+		for _, m := range refRe.FindAllStringSubmatch(val, -1) {
+			if err := fn(m[1], m[2], m[3]); err != nil {
 				return err
 			}
 		}

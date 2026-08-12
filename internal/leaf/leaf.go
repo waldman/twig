@@ -10,7 +10,7 @@ import (
 	"github.com/waldman/twig/internal/pathparse"
 )
 
-// All seven path variables — none may appear in vars.
+// reservedVars — none may appear as var names.
 var reservedVars = map[string]bool{
 	"cloud":       true,
 	"profile":     true,
@@ -19,6 +19,14 @@ var reservedVars = map[string]bool{
 	"class":       true,
 	"component":   true,
 	"module":      true,
+}
+
+// reservedKeys — none may be used as module instance keys or remote_state aliases
+// (they are ref namespaces in the ${ns.key.field} syntax).
+var reservedKeys = map[string]bool{
+	"module": true,
+	"remote": true,
+	"var":    true,
 }
 
 type Module struct {
@@ -63,6 +71,9 @@ func Load(leafFile string) (*Leaf, error) {
 	nodes := raw.RemoteState.Content
 	for i := 0; i+1 < len(nodes); i += 2 {
 		alias := nodes[i].Value
+		if reservedKeys[alias] {
+			return nil, fmt.Errorf("remote_state alias %q is a reserved ref namespace and cannot be used as an alias", alias)
+		}
 		path := nodes[i+1].Value
 		l.RemoteStateKeys = append(l.RemoteStateKeys, alias)
 		l.RemoteState[alias] = path
@@ -72,6 +83,9 @@ func Load(leafFile string) (*Leaf, error) {
 	nodes = raw.Modules.Content
 	for i := 0; i+1 < len(nodes); i += 2 {
 		key := nodes[i].Value
+		if reservedKeys[key] {
+			return nil, fmt.Errorf("module key %q is a reserved ref namespace and cannot be used as an instance key", key)
+		}
 		if _, conflict := l.RemoteState[key]; conflict {
 			return nil, fmt.Errorf("module key %q conflicts with remote_state alias of the same name", key)
 		}
