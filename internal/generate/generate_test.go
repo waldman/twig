@@ -231,6 +231,74 @@ func TestGenerate_remoteStateBlocks(t *testing.T) {
 	}
 }
 
+func TestGenerate_awsProviderBlock(t *testing.T) {
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `provider "aws"`) {
+		t.Error("missing aws provider block")
+	}
+	if !strings.Contains(out, `profile = "waldman"`) {
+		t.Error("missing profile")
+	}
+	if strings.Contains(out, "required_providers") {
+		t.Error("required_providers must not appear in generated output — modules own it")
+	}
+}
+
+func TestGenerate_gcpProviderBlock(t *testing.T) {
+	gcpSeg := &pathparse.Segments{
+		Cloud: "gcp", Profile: "my-project", Region: "us-central1",
+		Environment: "dev", Class: "compute", Component: "web",
+	}
+	l := makeLeaf([]string{"vm"}, map[string]*leaf.Module{"vm": {Source: "gcp/5/compute-instance"}})
+	out, err := Generate(testCfg, gcpSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `provider "google"`) {
+		t.Error("missing google provider block")
+	}
+	if !strings.Contains(out, `project = "my-project"`) {
+		t.Error("missing project")
+	}
+	if !strings.Contains(out, `region  = "us-central1"`) {
+		t.Error("missing region")
+	}
+}
+
+func TestGenerate_digitaloceanProviderBlock(t *testing.T) {
+	doSeg := &pathparse.Segments{
+		Cloud: "digitalocean", Profile: "myteam", Region: "nyc3",
+		Environment: "prod", Class: "droplet", Component: "web",
+	}
+	l := makeLeaf([]string{"droplet"}, map[string]*leaf.Module{"droplet": {Source: "digitalocean/2/droplet"}})
+	out, err := Generate(testCfg, doSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `provider "digitalocean"`) {
+		t.Error("missing digitalocean provider block")
+	}
+}
+
+func TestGenerate_unknownCloud(t *testing.T) {
+	badSeg := &pathparse.Segments{
+		Cloud: "azure", Profile: "myprofile", Region: "eastus",
+		Environment: "dev", Class: "vm", Component: "web",
+	}
+	l := makeLeaf([]string{"vm"}, map[string]*leaf.Module{"vm": {Source: "azure/3/vm"}})
+	_, err := Generate(testCfg, badSeg, l)
+	if err == nil {
+		t.Fatal("expected error for unsupported cloud, got nil")
+	}
+	if !strings.Contains(err.Error(), "azure") {
+		t.Errorf("error should mention unsupported cloud, got: %v", err)
+	}
+}
+
 func TestGenerate_remoteStateRef(t *testing.T) {
 	l := &leaf.Leaf{
 		ModuleKeys: []string{"ec2"},

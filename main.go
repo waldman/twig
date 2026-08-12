@@ -19,14 +19,18 @@ Usage:
   twig <command> <leaf-file> [-- <terraform-flags>...]
 
 Commands:
+  show     Print generated main.tf to stdout (no terraform)
   init     Generate main.tf and run terraform init
   plan     Generate main.tf, auto-init if needed, run terraform plan
   apply    Generate main.tf, auto-init if needed, run terraform apply
   destroy  Generate main.tf, auto-init if needed, run terraform destroy
-  show     Print generated main.tf to stdout (no terraform)
+  output   Generate main.tf, auto-init if needed, run terraform output
+  state    Generate main.tf, auto-init if needed, run terraform state <subcmd>
 
 The leaf file must be a .yaml file at:
-  infra/<provider>/<profile>/<region>/<environment>/<class>/<component>.yaml
+  infra/<cloud>/<profile>/<region>/<environment>/<class>/<component>.yaml
+
+Supported clouds: aws, gcp, digitalocean
 `
 
 func main() {
@@ -101,16 +105,28 @@ func run(args []string) error {
 		return err
 	}
 
-	switch cmd {
-	case "init":
-		return runner.Terraform(cacheDir, "init", extraArgs)
-	case "plan", "apply", "destroy":
+	autoInit := func() error {
 		if runner.NeedsInit(cacheDir) {
 			if err := runner.Init(cacheDir); err != nil {
 				return fmt.Errorf("auto-init failed: %w", err)
 			}
 		}
+		return nil
+	}
+
+	switch cmd {
+	case "init":
+		return runner.Terraform(cacheDir, "init", extraArgs)
+	case "plan", "apply", "destroy", "output":
+		if err := autoInit(); err != nil {
+			return err
+		}
 		return runner.Terraform(cacheDir, cmd, extraArgs)
+	case "state":
+		if err := autoInit(); err != nil {
+			return err
+		}
+		return runner.Terraform(cacheDir, "state", extraArgs)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 	}

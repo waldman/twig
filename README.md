@@ -29,7 +29,7 @@ Seven variables are automatically derived and injected into every module call:
 ## Requirements
 
 - [Terraform](https://developer.hashicorp.com/terraform/install) in `$PATH`
-- AWS credentials configured (profile or environment variables)
+- Cloud credentials configured (see [Supported clouds](#supported-clouds))
 
 ## Install
 
@@ -105,12 +105,26 @@ twig <command> <leaf-file> [-- <terraform-flags>...]
 | `twig plan <leaf>` | Generate + auto-init + `terraform plan` |
 | `twig apply <leaf>` | Generate + auto-init + `terraform apply` |
 | `twig destroy <leaf>` | Generate + auto-init + `terraform destroy` |
+| `twig output <leaf>` | Generate + auto-init + `terraform output` |
+| `twig state <leaf>` | Generate + auto-init + `terraform state <subcmd>` |
 
 Pass flags through to Terraform after `--`:
 
 ```
 twig apply infra/aws/myprofile/us-east-1/production/services/my-app.yaml -- -auto-approve
+twig output infra/aws/myprofile/us-east-1/production/services/my-app.yaml -- -json
+twig state  infra/aws/myprofile/us-east-1/dev/ec2/web.yaml -- mv module.ec2.aws_security_group.this module.sg.aws_security_group.this
 ```
+
+## Supported clouds
+
+The `cloud` path segment determines the provider block twig generates. Modules own their own `required_providers` version constraint via `versions.tf`; twig only wires up credentials and region.
+
+| `cloud` | Provider | Credential source |
+|---|---|---|
+| `aws` | `hashicorp/aws` | `profile` path segment → `~/.aws/credentials` section |
+| `gcp` | `hashicorp/google` | `profile` path segment → GCP project ID; creds via `GOOGLE_CREDENTIALS` env var or ADC |
+| `digitalocean` | `digitalocean/digitalocean` | `DIGITALOCEAN_TOKEN` env var |
 
 ## Leaf file format
 

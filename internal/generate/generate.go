@@ -27,7 +27,9 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 	var b strings.Builder
 
 	writeTerraformBlock(&b, cfg, seg)
-	writeProviderBlock(&b, seg)
+	if err := writeProviderBlock(&b, seg); err != nil {
+		return "", err
+	}
 
 	if err := writeRemoteStateBlocks(&b, cfg, l); err != nil {
 		return "", err
@@ -56,12 +58,6 @@ func makeResolver(modules map[string]*leaf.Module, remoteState map[string]string
 func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.Segments) {
 	b.WriteString("terraform {\n")
 	b.WriteString("  required_version = \">= 1.1\"\n")
-	b.WriteString("  required_providers {\n")
-	b.WriteString("    aws = {\n")
-	b.WriteString("      source  = \"hashicorp/aws\"\n")
-	b.WriteString("      version = \"~> 5.0\"\n")
-	b.WriteString("    }\n")
-	b.WriteString("  }\n")
 	b.WriteString("  backend \"s3\" {\n")
 
 	keys := make([]string, 0, len(cfg.Backend))
@@ -77,11 +73,27 @@ func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.
 	b.WriteString("}\n\n")
 }
 
-func writeProviderBlock(b *strings.Builder, seg *pathparse.Segments) {
-	b.WriteString("provider \"aws\" {\n")
-	b.WriteString(fmt.Sprintf("  profile = %q\n", seg.Profile))
-	b.WriteString(fmt.Sprintf("  region  = %q\n", seg.Region))
-	b.WriteString("}\n\n")
+func writeProviderBlock(b *strings.Builder, seg *pathparse.Segments) error {
+	switch seg.Cloud {
+	case "aws":
+		b.WriteString("provider \"aws\" {\n")
+		b.WriteString(fmt.Sprintf("  profile = %q\n", seg.Profile))
+		b.WriteString(fmt.Sprintf("  region  = %q\n", seg.Region))
+		b.WriteString("}\n\n")
+	case "gcp":
+		// project = profile path segment; credentials via GOOGLE_CREDENTIALS env var or ADC.
+		b.WriteString("provider \"google\" {\n")
+		b.WriteString(fmt.Sprintf("  project = %q\n", seg.Profile))
+		b.WriteString(fmt.Sprintf("  region  = %q\n", seg.Region))
+		b.WriteString("}\n\n")
+	case "digitalocean":
+		// token via DIGITALOCEAN_TOKEN env var.
+		b.WriteString("provider \"digitalocean\" {\n")
+		b.WriteString("}\n\n")
+	default:
+		return fmt.Errorf("unsupported cloud %q: supported values are aws, gcp, digitalocean", seg.Cloud)
+	}
+	return nil
 }
 
 func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf) error {
