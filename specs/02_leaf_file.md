@@ -1,0 +1,140 @@
+# TWIG - LEAF FILE SPEC
+
+## Leaf file
+
+One `.yaml` file per deployable component:
+
+```
+infra/aws/waldman/us-east-1/production/services/ansible-anchor.yaml
+```
+
+The filename (without `.yaml`) becomes the `component` variable. The file
+declares which modules to call and the variable values to pass.
+
+### Format
+
+```yaml
+modules:
+  <instance_key>:
+    source: <cloud>/<version>/<module-name>
+    vars:
+      <variable_name>: <value>
+```
+
+### Rules
+
+- `instance_key` must be unique within the file. It becomes both the
+  Terraform module label (`module "<instance_key>"`) and the `module`
+  variable injected into that module call.
+- `source` is resolved against `modules_path` to an absolute directory.
+- All seven path variables are injected automatically and cannot appear
+  in `vars`.
+- `vars` values are strings, numbers, booleans, lists, or maps.
+
+### Remote state references
+
+An optional `remote_state:` block declares outputs consumed from other leaves.
+The values are read from their S3 state files at plan/apply time — no data
+copying, no hardcoding.
+
+```yaml
+remote_state:
+  <alias>: <path-to-leaf.yaml relative to project root>
+```
+
+Aliases must not conflict with module instance keys. The same backend config
+(bucket, region, profile) is used; only the `key` changes to point at the
+target leaf's state file.
+
+### Cross-module references
+
+A value containing `${alias.output_name}` is a cross-ref. The alias can be
+either a module instance key (intra-leaf) or a `remote_state` alias
+(cross-leaf). The syntax is identical; twig resolves them differently:
+
+| YAML value | Context | Generated HCL |
+|---|---|---|
+| `${x.bucket_arn}` | `x` is a module key | `module.x.bucket_arn` |
+| `${vpc.vpc_id}` | `vpc` is a remote state alias | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${x.bucket_arn}/*` | either | `"${module.x.bucket_arn}/*"` (interpolated string) |
+| `arn:aws:s3:::my-bucket` | — | `"arn:aws:s3:::my-bucket"` (string literal) |
+
+### Example
+
+```
+infra/aws/waldman/us-east-1/production/services/ansible-anchor.yaml
+```
+
+```yaml
+modules:
+  s3_bucket:
+    source: aws/5/s3-bucket
+    vars:
+      s3_bucket_name: anchor-automation
+
+  dynamodb:
+    source: aws/5/dynamodb
+    vars:
+      dynamodb_table_name: ansible-anchor
+      dynamodb_hash_key: node
+      dynamodb_ttl_enabled: true
+      dynamodb_ttl_attribute: ttl
+
+  iam_cicd:
+    source: aws/5/iam-user
+
+  iam_cicd_policy:
+    source: aws/5/iam-policy
+    vars:
+      iam_policy_user_name: ${iam_cicd.user_name}
+      iam_policy_statements:
+        - effect: Allow
+          actions: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+          resources:
+            - ${s3_bucket.bucket_arn}
+            - ${s3_bucket.bucket_arn}/*
+
+  iam_infra:
+    source: aws/5/iam-user
+
+  iam_infra_policy:
+    source: aws/5/iam-policy
+    vars:
+      iam_policy_user_name: ${iam_infra.user_name}
+      iam_policy_statements:
+        - effect: Allow
+          actions: [s3:GetObject, s3:ListBucket]
+          resources:
+            - ${s3_bucket.bucket_arn}
+            - ${s3_bucket.bucket_arn}/*
+        - effect: Allow
+          actions: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:DescribeTable]
+          resources:
+            - ${dynamodb.table_arn}
+```
+
+Note: `iam_cicd` and `iam_infra` require no `vars` — the `module` variable
+(`iam_cicd` / `iam_infra`) already distinguishes them within the component.
+
+### Cross-leaf example
+
+```
+infra/aws/waldman/us-east-1/dev/ec2/app.yaml
+```
+
+```yaml
+remote_state:
+  vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
+
+modules:
+  app:
+    source: aws/5/ec2
+    vars:
+      ec2_vpc_id:    ${vpc.vpc_id}
+      ec2_subnet_id: ${vpc.first_public_subnet_id}
+```
+
+twig generates a `data "terraform_remote_state" "vpc"` block that reads
+`vpc_id` and `first_public_subnet_id` from the vpc leaf's S3 state file.
+No coordination required between the two leaf operators beyond agreeing on
+output names.
