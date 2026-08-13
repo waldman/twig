@@ -3,6 +3,7 @@ package leaf
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/waldman/twig/internal/pathparse"
@@ -150,7 +151,7 @@ modules:
 	}
 }
 
-// helpers for LoadInheritedVars tests
+// helpers for LoadInherited tests
 
 func makeInfraTree(t *testing.T) (root string, seg *pathparse.Segments) {
 	t.Helper()
@@ -172,103 +173,244 @@ func writeVarsYAML(t *testing.T, dir, content string) {
 	}
 }
 
-func TestLoadInheritedVars_noFiles(t *testing.T) {
+func TestLoadInherited_noFiles(t *testing.T) {
 	root, seg := makeInfraTree(t)
-	vars, err := LoadInheritedVars(root, seg)
+	inh, err := LoadInherited(root, seg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vars) != 0 {
-		t.Errorf("expected empty map, got %v", vars)
+	if len(inh.Vars) != 0 || len(inh.RemoteState) != 0 || len(inh.ModuleDefaults) != 0 {
+		t.Errorf("expected all sections empty, got %+v", inh)
 	}
 }
 
-func TestLoadInheritedVars_singleLevel(t *testing.T) {
+func TestLoadInherited_singleLevel(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "vars:\n  cost_center: engineering\n")
 
-	vars, err := LoadInheritedVars(root, seg)
+	inh, err := LoadInherited(root, seg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vars["cost_center"] != "engineering" {
-		t.Errorf("expected cost_center=engineering, got %v", vars["cost_center"])
+	if inh.Vars["cost_center"] != "engineering" {
+		t.Errorf("expected cost_center=engineering, got %v", inh.Vars["cost_center"])
+	}
+	if got := inh.VarsOrigins["cost_center"]; !strings.HasSuffix(got, "infra/aws/vars.yaml") {
+		t.Errorf("expected origin infra/aws/vars.yaml, got %q", got)
 	}
 }
 
-func TestLoadInheritedVars_lowerWins(t *testing.T) {
+func TestLoadInherited_lowerWins(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra"), "vars:\n  tier: base\n")
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1", "production"), "vars:\n  tier: prod-override\n")
 
-	vars, err := LoadInheritedVars(root, seg)
+	inh, err := LoadInherited(root, seg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vars["tier"] != "prod-override" {
-		t.Errorf("expected lower level to win, got %v", vars["tier"])
+	if inh.Vars["tier"] != "prod-override" {
+		t.Errorf("expected lower level to win, got %v", inh.Vars["tier"])
+	}
+	if got := inh.VarsOrigins["tier"]; !strings.HasSuffix(got, "production/vars.yaml") {
+		t.Errorf("expected origin to be the production-level file, got %q", got)
 	}
 }
 
-func TestLoadInheritedVars_mergeAcrossLevels(t *testing.T) {
+func TestLoadInherited_mergeAcrossLevels(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra"), "vars:\n  cost_center: engineering\n")
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"), "vars:\n  vpc_id: vpc-abc123\n")
 
-	vars, err := LoadInheritedVars(root, seg)
+	inh, err := LoadInherited(root, seg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vars["cost_center"] != "engineering" {
-		t.Errorf("expected cost_center from root level, got %v", vars["cost_center"])
+	if inh.Vars["cost_center"] != "engineering" {
+		t.Errorf("expected cost_center from root level, got %v", inh.Vars["cost_center"])
 	}
-	if vars["vpc_id"] != "vpc-abc123" {
-		t.Errorf("expected vpc_id from region level, got %v", vars["vpc_id"])
+	if inh.Vars["vpc_id"] != "vpc-abc123" {
+		t.Errorf("expected vpc_id from region level, got %v", inh.Vars["vpc_id"])
 	}
 }
 
-func TestLoadInheritedVars_reservedVarRejected(t *testing.T) {
+func TestLoadInherited_reservedVarRejected(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "vars:\n  region: us-west-2\n")
 
-	_, err := LoadInheritedVars(root, seg)
+	_, err := LoadInherited(root, seg)
 	if err == nil {
 		t.Fatal("expected error for reserved var name, got nil")
 	}
 }
 
-func TestLoadInheritedVars_unknownTopLevelKeyRejected(t *testing.T) {
+func TestLoadInherited_unknownTopLevelKeyRejected(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "cost_center: engineering\n")
 
-	_, err := LoadInheritedVars(root, seg)
+	_, err := LoadInherited(root, seg)
 	if err == nil {
 		t.Fatal("expected error for unknown top-level key, got nil")
 	}
 }
 
-func TestLoadInheritedVars_emptyFile(t *testing.T) {
+func TestLoadInherited_emptyFile(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "")
 
-	vars, err := LoadInheritedVars(root, seg)
+	inh, err := LoadInherited(root, seg)
 	if err != nil {
 		t.Fatalf("empty vars.yaml should be accepted, got: %v", err)
 	}
-	if len(vars) != 0 {
-		t.Errorf("expected empty map, got %v", vars)
+	if len(inh.Vars) != 0 {
+		t.Errorf("expected empty vars, got %v", inh.Vars)
 	}
 }
 
-func TestLoadInheritedVars_emptyVarsBlock(t *testing.T) {
+func TestLoadInherited_emptyVarsBlock(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "vars:\n")
 
-	vars, err := LoadInheritedVars(root, seg)
+	inh, err := LoadInherited(root, seg)
 	if err != nil {
 		t.Fatalf("empty vars: block should be accepted, got: %v", err)
 	}
-	if len(vars) != 0 {
-		t.Errorf("expected empty map, got %v", vars)
+	if len(inh.Vars) != 0 {
+		t.Errorf("expected empty vars, got %v", inh.Vars)
+	}
+}
+
+func TestLoadInherited_remoteStateInherited(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"),
+		"remote_state:\n  network: infra/aws/myprofile/us-east-1/base/network/main.yaml\n")
+
+	inh, err := LoadInherited(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := inh.RemoteState["network"]; got != "infra/aws/myprofile/us-east-1/base/network/main.yaml" {
+		t.Errorf("expected inherited remote_state network alias, got %q", got)
+	}
+	if got := inh.RemoteStateOrigins["network"]; !strings.HasSuffix(got, "us-east-1/vars.yaml") {
+		t.Errorf("expected origin to be the region-level file, got %q", got)
+	}
+}
+
+func TestLoadInherited_remoteStateLowerWins(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra"),
+		"remote_state:\n  network: infra/aws/myprofile/us-east-1/base/high/main.yaml\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"),
+		"remote_state:\n  network: infra/aws/myprofile/us-east-1/base/low/main.yaml\n")
+
+	inh, err := LoadInherited(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inh.RemoteState["network"], "/low/") {
+		t.Errorf("expected lower level to win, got %q", inh.RemoteState["network"])
+	}
+}
+
+func TestLoadInherited_remoteStateReservedAliasRejected(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
+		"remote_state:\n  vars: infra/aws/myprofile/us-east-1/base/x/main.yaml\n")
+
+	_, err := LoadInherited(root, seg)
+	if err == nil {
+		t.Fatal("expected error for reserved alias in inherited remote_state, got nil")
+	}
+}
+
+func TestLoadInherited_moduleDefaultsSingleSource(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
+		"module_defaults:\n  aws/5/vpc:\n    vpc_cidr_block: 10.0.0.0/16\n    vpc_availability_zones: 2\n")
+
+	inh, err := LoadInherited(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := inh.ModuleDefaults["aws/5/vpc"]
+	if got["vpc_cidr_block"] != "10.0.0.0/16" {
+		t.Errorf("expected vpc_cidr_block=10.0.0.0/16, got %v", got["vpc_cidr_block"])
+	}
+	if got["vpc_availability_zones"] != 2 {
+		t.Errorf("expected vpc_availability_zones=2, got %v", got["vpc_availability_zones"])
+	}
+	if o := inh.ModuleDefaultsOrigins["aws/5/vpc"]["vpc_cidr_block"]; !strings.HasSuffix(o, "aws/vars.yaml") {
+		t.Errorf("expected origin infra/aws/vars.yaml, got %q", o)
+	}
+}
+
+func TestLoadInherited_moduleDefaultsMergeAcrossLevels(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
+		"module_defaults:\n  aws/5/vpc:\n    vpc_cidr_block: 10.0.0.0/16\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile"),
+		"module_defaults:\n  aws/5/vpc:\n    vpc_availability_zones: 3\n")
+
+	inh, err := LoadInherited(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := inh.ModuleDefaults["aws/5/vpc"]
+	if got["vpc_cidr_block"] != "10.0.0.0/16" || got["vpc_availability_zones"] != 3 {
+		t.Errorf("expected both keys merged from different levels, got %v", got)
+	}
+}
+
+func TestLoadInherited_moduleDefaultsLowerWinsPerKey(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
+		"module_defaults:\n  aws/5/vpc:\n    vpc_cidr_block: 10.0.0.0/16\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile"),
+		"module_defaults:\n  aws/5/vpc:\n    vpc_cidr_block: 10.99.0.0/16\n")
+
+	inh, err := LoadInherited(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := inh.ModuleDefaults["aws/5/vpc"]["vpc_cidr_block"]; got != "10.99.0.0/16" {
+		t.Errorf("expected lower level to win per key, got %v", got)
+	}
+}
+
+func TestLoadInherited_moduleDefaultsReservedVarRejected(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
+		"module_defaults:\n  aws/5/vpc:\n    region: us-west-2\n")
+
+	_, err := LoadInherited(root, seg)
+	if err == nil {
+		t.Fatal("expected error for reserved var inside module_defaults, got nil")
+	}
+}
+
+func TestLoadInherited_allSectionsCoexist(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), `vars:
+  vpn_cidr: 10.30.0.0/16
+remote_state:
+  network: infra/aws/myprofile/us-east-1/base/network/main.yaml
+module_defaults:
+  aws/5/ec2:
+    ec2_instance_type: t3.small
+`)
+
+	inh, err := LoadInherited(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inh.Vars["vpn_cidr"] != "10.30.0.0/16" {
+		t.Errorf("vars missing: %v", inh.Vars)
+	}
+	if inh.RemoteState["network"] == "" {
+		t.Errorf("remote_state missing: %v", inh.RemoteState)
+	}
+	if inh.ModuleDefaults["aws/5/ec2"]["ec2_instance_type"] != "t3.small" {
+		t.Errorf("module_defaults missing: %v", inh.ModuleDefaults)
 	}
 }

@@ -138,9 +138,9 @@ Keys match the `<cloud>` segment used in module source paths (`aws/5/vpc`, `data
 
 twig errors if `providers.yaml` is missing for a leaf's cloud.
 
-## Inherited variables
+## Inherited variables (`vars.yaml`)
 
-Place a `vars.yaml` at any directory level under `infra/` to declare values that leaves below that point can reference by name:
+Place a `vars.yaml` at any directory level under `infra/` to share configuration with leaves below that point:
 
 ```
 infra/vars.yaml                                          ← all clouds
@@ -150,18 +150,31 @@ infra/aws/myprofile/us-east-1/production/vars.yaml       ← all production leav
 infra/aws/myprofile/us-east-1/production/services/vars.yaml  ← all service leaves
 ```
 
-Values live under a top-level `vars:` key:
+Three top-level sections, all optional:
 
 ```yaml
-# infra/aws/vars.yaml
 vars:
-  cost_center: engineering
-  vpn_cidr:    10.30.0.0/16
-  default_tags:
-    ManagedBy: twig
+  # reference-only values, resolved via ${vars.<name>} in a leaf
+  vpn_cidr:          10.30.0.0/16
+  internal_dns_zone: internal.example.com
+
+remote_state:
+  # alias → leaf path; merges with the leaf's own remote_state (leaf wins per alias)
+  network: infra/aws/myprofile/us-east-1/base/network/main.yaml
+
+module_defaults:
+  # default vars for modules whose source matches the top-level key exactly
+  aws/5/vpc:
+    vpc_cidr_block:         10.0.0.0/16
+    vpc_availability_zones: 2
+  aws/5/ec2:
+    ec2_instance_type: t3.small
+    ec2_subnet_id:     ${remote.network.first_public_subnet_id}
 ```
 
-Reference inherited vars in leaf files with `${vars.<name>}`:
+### `vars:` — reference-resolvable values
+
+Reference from a leaf with `${vars.<name>}`:
 
 ```yaml
 modules:
@@ -173,15 +186,42 @@ modules:
 
 A pure `${vars.x}` expands to the correct HCL for its type (string, bool, number, list, map). Embedded in a string it is interpolated as its string representation.
 
-Inherited variables are **not** automatically injected into modules — they are available only through explicit `${vars.<name>}` references. This means a `vars.yaml` may hold values used by only some leaves without breaking others.
+Values under `vars:` are **not** auto-injected into modules — they are available only through explicit references. This means a `vars.yaml` may hold values used by only some leaves without breaking others.
 
-Merge rules:
-- Lower levels (closer to the leaf) override higher levels.
-- Module-level `vars:` in the leaf always override inherited values via `${vars.x}` for the same key.
-- Only `vars:` is accepted as a top-level key in `vars.yaml` (further sections reserved for future use).
-- Reserved path variable names (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) are rejected inside the `vars:` block.
-- The ref namespace names (`module`, `remote`, `vars`) are reserved and cannot be used as module instance keys or remote_state aliases.
-- References (`${module.x.y}`, `${remote.x.y}`, `${vars.x}`) are not supported inside `vars.yaml` values.
+### `remote_state:` — inherited remote-state aliases
+
+Aliases declared here are added to the effective remote-state map that every leaf below sees, alongside any aliases the leaf declares itself. A leaf's own `remote_state:` wins on alias-key collision.
+
+The corresponding `data "terraform_remote_state"` block is emitted **only when referenced**. Aliases that no module var references produce no data block — declare freely without worrying about unnecessary state reads in leaves that don't need them.
+
+### `module_defaults:` — scoped default vars per module source
+
+The top-level key is the **full module source path** (e.g. `aws/5/vpc`), matched exactly against a leaf's `modules.<instance>.source`. Different major versions (`aws/5/vpc` vs `aws/6/vpc`) may declare different variables, so defaults do not carry across versions.
+
+For each module instance in a leaf:
+1. Twig starts with the merged `module_defaults[<mod.source>]` map from the hierarchy.
+2. Overlays the leaf's own `modules.<instance>.vars` per-key. Leaf wins.
+3. Emits the result as the module block's arguments.
+
+Values in `module_defaults` may reference `${vars.<name>}`, `${remote.<alias>.<field>}`, or `${module.<instance>.<field>}` — all resolved against the consuming leaf's context.
+
+### Merge rules
+
+- All three sections merge per-key across the hierarchy — closer to the leaf wins.
+- `module_defaults.<source>` merges per source, then per variable inside that source.
+- Values are replaced wholesale — no deep merge inside map values.
+- The leaf's own `modules.<instance>.vars` and `remote_state:` merge last (leaf wins).
+
+### Restrictions
+
+- Only `vars:`, `remote_state:`, and `module_defaults:` are accepted as top-level keys in `vars.yaml`.
+- Reserved path variable names (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) may not be used as keys inside `vars:` or inside any `module_defaults.<source>` map.
+- Reserved ref namespaces (`module`, `remote`, `vars`) may not be used as module instance keys or `remote_state` aliases.
+- References (`${...}`) are permitted inside `module_defaults.<source>.<var>` values but **not** inside `vars:` values.
+
+## Provenance
+
+Every argument in a generated module block carries a trailing `# from: <origin>` comment showing where it came from — `path` for path variables, `leaf: modules.<instance>.vars` for leaf-declared vars, `<path>: module_defaults."<source>"` for inherited defaults. Makes debugging generated output a one-step lookup instead of an inheritance-trace.
 
 ## Leaf file format
 

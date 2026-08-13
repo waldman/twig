@@ -258,9 +258,16 @@ func TestStringToHCL(t *testing.T) {
 }
 
 func TestGenerate_remoteStateBlocks(t *testing.T) {
+	// The alias must be referenced somewhere for the data block to be emitted
+	// (lazy emission — see specs/04_generation.md).
 	l := &leaf.Leaf{
-		ModuleKeys:      []string{"ec2"},
-		Modules:         map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
+		ModuleKeys: []string{"ec2"},
+		Modules: map[string]*leaf.Module{
+			"ec2": {
+				Source: "aws/5/ec2",
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.vpc.vpc_id}"},
+			},
+		},
 		RemoteStateKeys: []string{"vpc"},
 		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
 	}
@@ -444,7 +451,7 @@ func TestGenerate_inheritedVarsNotAutoInjected(t *testing.T) {
 	// Inherited vars must NOT be auto-injected into module blocks. They are
 	// available only through explicit ${vars.x} references in module vars.
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
-	l.InheritedVars = map[string]interface{}{"cost_center": "engineering"}
+	l.Inherited = &leaf.Inherited{Vars: map[string]interface{}{"cost_center": "engineering"}}
 
 	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
@@ -462,7 +469,7 @@ func TestGenerate_varsRefResolvesToInherited(t *testing.T) {
 			"ec2_cost_center": "${vars.cost_center}",
 		}},
 	})
-	l.InheritedVars = map[string]interface{}{"cost_center": "engineering"}
+	l.Inherited = &leaf.Inherited{Vars: map[string]interface{}{"cost_center": "engineering"}}
 
 	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
@@ -480,7 +487,7 @@ func TestGenerate_varsRefUndeclared(t *testing.T) {
 			"ec2_tag": "${vars.nonexistent}",
 		}},
 	})
-	l.InheritedVars = map[string]interface{}{}
+	l.Inherited = &leaf.Inherited{Vars: map[string]interface{}{}}
 
 	_, err := Generate(testCfg, testSeg, l)
 	if err == nil {
@@ -493,7 +500,7 @@ func TestGenerate_varsRefUndeclared(t *testing.T) {
 
 func TestGenerate_inheritedVarsCrossRefRejected(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
-	l.InheritedVars = map[string]interface{}{"bad": "${module.ec2.output}"}
+	l.Inherited = &leaf.Inherited{Vars: map[string]interface{}{"bad": "${module.ec2.output}"}}
 
 	_, err := Generate(testCfg, testSeg, l)
 	if err == nil {
@@ -507,7 +514,12 @@ func TestGenerate_inheritedVarsCrossRefRejected(t *testing.T) {
 func TestGenerate_remoteStateBlocksBeforeModules(t *testing.T) {
 	l := &leaf.Leaf{
 		ModuleKeys: []string{"ec2"},
-		Modules:    map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
+		Modules: map[string]*leaf.Module{
+			"ec2": {
+				Source: "aws/5/ec2",
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.vpc.vpc_id}"},
+			},
+		},
 		RemoteStateKeys: []string{"vpc"},
 		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
 	}
@@ -524,5 +536,310 @@ func TestGenerate_remoteStateBlocksBeforeModules(t *testing.T) {
 	}
 	if dataIdx > modIdx {
 		t.Error("remote state blocks must appear before module blocks")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// module_defaults injection
+// -----------------------------------------------------------------------------
+
+func TestGenerate_moduleDefaultsInjectedForMatchingSource(t *testing.T) {
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
+	l.Inherited = &leaf.Inherited{
+		ModuleDefaults: map[string]map[string]interface{}{
+			"aws/5/vpc": {"vpc_cidr_block": "10.0.0.0/16"},
+		},
+		ModuleDefaultsOrigins: map[string]map[string]string{
+			"aws/5/vpc": {"vpc_cidr_block": "infra/aws/vars.yaml"},
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `vpc_cidr_block = "10.0.0.0/16"`) {
+		t.Errorf("expected inherited module_default injected:\n%s", out)
+	}
+	if !strings.Contains(out, `# from: infra/aws/vars.yaml: module_defaults."aws/5/vpc"`) {
+		t.Errorf("expected provenance comment for module_defaults var:\n%s", out)
+	}
+}
+
+func TestGenerate_moduleDefaultsNotInjectedForDifferentSource(t *testing.T) {
+	// module_defaults keyed on aws/5/vpc must NOT apply to an ec2 module.
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.Inherited = &leaf.Inherited{
+		ModuleDefaults: map[string]map[string]interface{}{
+			"aws/5/vpc": {"vpc_cidr_block": "10.0.0.0/16"},
+		},
+		ModuleDefaultsOrigins: map[string]map[string]string{
+			"aws/5/vpc": {"vpc_cidr_block": "infra/aws/vars.yaml"},
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "vpc_cidr_block") {
+		t.Errorf("vpc default leaked into ec2 module block:\n%s", out)
+	}
+}
+
+func TestGenerate_moduleDefaultsLeafOverrides(t *testing.T) {
+	// Leaf's own module.vars wins per-key over module_defaults for same key.
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{
+		"vpc": {Source: "aws/5/vpc", Vars: map[string]interface{}{"vpc_cidr_block": "10.99.0.0/16"}},
+	})
+	l.Inherited = &leaf.Inherited{
+		ModuleDefaults: map[string]map[string]interface{}{
+			"aws/5/vpc": {"vpc_cidr_block": "10.0.0.0/16"},
+		},
+		ModuleDefaultsOrigins: map[string]map[string]string{
+			"aws/5/vpc": {"vpc_cidr_block": "infra/aws/vars.yaml"},
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `vpc_cidr_block = "10.99.0.0/16"`) {
+		t.Errorf("leaf should override inherited default:\n%s", out)
+	}
+	if strings.Contains(out, `"10.0.0.0/16"`) {
+		t.Errorf("inherited default should be overridden, not present in output:\n%s", out)
+	}
+	if !strings.Contains(out, `# from: leaf: modules.vpc.vars`) {
+		t.Errorf("expected leaf provenance on overriding value:\n%s", out)
+	}
+}
+
+func TestGenerate_moduleDefaultsVarsRefResolves(t *testing.T) {
+	// A ${vars.x} reference inside a module_defaults value resolves against
+	// the merged inherited vars: for the consuming leaf.
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.Inherited = &leaf.Inherited{
+		Vars: map[string]interface{}{"cost_center": "engineering"},
+		ModuleDefaults: map[string]map[string]interface{}{
+			"aws/5/ec2": {"ec2_cost_center": "${vars.cost_center}"},
+		},
+		ModuleDefaultsOrigins: map[string]map[string]string{
+			"aws/5/ec2": {"ec2_cost_center": "infra/aws/vars.yaml"},
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `ec2_cost_center = "engineering"`) {
+		t.Errorf("expected ${vars.cost_center} in module_defaults to resolve:\n%s", out)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// remote_state in vars.yaml + lazy emission
+// -----------------------------------------------------------------------------
+
+func TestGenerate_inheritedRemoteStateEmittedWhenReferenced(t *testing.T) {
+	// Alias declared only in inherited remote_state; leaf references it via ${remote.x.y}.
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
+		"ec2": {
+			Source: "aws/5/ec2",
+			Vars:   map[string]interface{}{"ec2_subnet_id": "${remote.network.first_public_subnet_id}"},
+		},
+	})
+	l.Inherited = &leaf.Inherited{
+		RemoteState: map[string]string{
+			"network": "infra/aws/waldman/us-east-1/base/network/main.yaml",
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `data "terraform_remote_state" "network"`) {
+		t.Errorf("expected data block for inherited remote alias:\n%s", out)
+	}
+	if !strings.Contains(out, `ec2_subnet_id = data.terraform_remote_state.network.outputs.first_public_subnet_id`) {
+		t.Errorf("expected ${remote.network.x} to resolve to data source:\n%s", out)
+	}
+}
+
+func TestGenerate_inheritedRemoteStateNotEmittedWhenUnreferenced(t *testing.T) {
+	// Alias declared in inherited remote_state but never referenced ⇒ no data block.
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.Inherited = &leaf.Inherited{
+		RemoteState: map[string]string{
+			"network": "infra/aws/waldman/us-east-1/base/network/main.yaml",
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "terraform_remote_state") {
+		t.Errorf("unreferenced inherited remote_state should NOT produce a data block:\n%s", out)
+	}
+}
+
+func TestGenerate_leafRemoteStateOverridesInherited(t *testing.T) {
+	// Same alias in both inherited remote_state and leaf remote_state: leaf wins.
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules: map[string]*leaf.Module{
+			"ec2": {
+				Source: "aws/5/ec2",
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.network.vpc_id}"},
+			},
+		},
+		RemoteStateKeys: []string{"network"},
+		RemoteState: map[string]string{
+			"network": "infra/aws/waldman/us-east-1/base/leaf-wins/main.yaml",
+		},
+		Inherited: &leaf.Inherited{
+			RemoteState: map[string]string{
+				"network": "infra/aws/waldman/us-east-1/base/inherited-loses/main.yaml",
+			},
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "leaf-wins/main/terraform.tfstate") {
+		t.Errorf("expected leaf remote_state to override inherited:\n%s", out)
+	}
+	if strings.Contains(out, "inherited-loses") {
+		t.Errorf("inherited remote_state should not appear:\n%s", out)
+	}
+}
+
+func TestGenerate_moduleDefaultsRemoteRefEmitsDataBlock(t *testing.T) {
+	// A ${remote.x.y} reference inside a module_defaults value triggers
+	// emission of the data block for that alias (lazy emission includes
+	// module_defaults refs, not just leaf refs).
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.Inherited = &leaf.Inherited{
+		RemoteState: map[string]string{
+			"network": "infra/aws/waldman/us-east-1/base/network/main.yaml",
+		},
+		ModuleDefaults: map[string]map[string]interface{}{
+			"aws/5/ec2": {"ec2_subnet_id": "${remote.network.first_public_subnet_id}"},
+		},
+		ModuleDefaultsOrigins: map[string]map[string]string{
+			"aws/5/ec2": {"ec2_subnet_id": "infra/aws/vars.yaml"},
+		},
+	}
+
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `data "terraform_remote_state" "network"`) {
+		t.Errorf("expected data block for alias referenced from module_defaults:\n%s", out)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Provenance comments
+// -----------------------------------------------------------------------------
+
+func TestGenerate_provenancePathVars(t *testing.T) {
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`cloud       = "aws"  # from: path`,
+		`profile     = "waldman"  # from: path`,
+		`module      = "ec2"  # from: path`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected path provenance %q\ngot:\n%s", want, out)
+		}
+	}
+}
+
+func TestGenerate_provenanceLeafVar(t *testing.T) {
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
+		"ec2": {Source: "aws/5/ec2", Vars: map[string]interface{}{"ec2_ami": "ami-abc"}},
+	})
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `ec2_ami = "ami-abc"  # from: leaf: modules.ec2.vars`) {
+		t.Errorf("expected leaf provenance:\n%s", out)
+	}
+}
+
+func TestGenerate_provenanceModuleDefault(t *testing.T) {
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
+	l.Inherited = &leaf.Inherited{
+		ModuleDefaults: map[string]map[string]interface{}{
+			"aws/5/ec2": {"ec2_instance_type": "t3.small"},
+		},
+		ModuleDefaultsOrigins: map[string]map[string]string{
+			"aws/5/ec2": {"ec2_instance_type": "/abs/path/infra/aws/vars.yaml"},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `ec2_instance_type = "t3.small"  # from: /abs/path/infra/aws/vars.yaml: module_defaults."aws/5/ec2"`) {
+		t.Errorf("expected module_defaults provenance:\n%s", out)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Reference validation with effective merged state
+// -----------------------------------------------------------------------------
+
+func TestGenerate_remoteRefValidatesAgainstInherited(t *testing.T) {
+	// A leaf can reference an alias that only exists in inherited remote_state.
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
+		"ec2": {
+			Source: "aws/5/ec2",
+			Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.network.vpc_id}"},
+		},
+	})
+	l.Inherited = &leaf.Inherited{
+		RemoteState: map[string]string{
+			"network": "infra/aws/waldman/us-east-1/base/network/main.yaml",
+		},
+	}
+
+	_, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatalf("inherited alias should satisfy leaf ref, got: %v", err)
+	}
+}
+
+func TestGenerate_remoteRefUnknownFailsWithInherited(t *testing.T) {
+	// If neither leaf nor inherited has the alias, fail.
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
+		"ec2": {
+			Source: "aws/5/ec2",
+			Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.nowhere.vpc_id}"},
+		},
+	})
+	l.Inherited = &leaf.Inherited{
+		RemoteState: map[string]string{"other": "infra/aws/waldman/us-east-1/base/other/main.yaml"},
+	}
+
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil {
+		t.Fatal("expected error for unknown remote alias, got nil")
+	}
+	if !strings.Contains(err.Error(), "nowhere") {
+		t.Errorf("error should mention undeclared alias, got: %v", err)
 	}
 }
