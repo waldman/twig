@@ -50,6 +50,13 @@ remote_state:
 - Aliases must not be reserved ref namespaces (`module`, `remote`, `vars`).
 - The same backend config (bucket, region, profile) is used; only the `key`
   changes to point at the target leaf's state file.
+- The leaf's `remote_state:` block merges with the inherited
+  `remote_state:` map from the `vars.yaml` hierarchy (see
+  `specs/07_inherited_vars.md`). On alias-key collisions, the leaf wins.
+- Only aliases actually referenced in the resolved module vars produce
+  a `data "terraform_remote_state"` block in the output (lazy emission).
+  Declaring an alias here or in a `vars.yaml` and never referencing it
+  is not an error.
 
 ### References
 

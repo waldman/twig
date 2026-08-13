@@ -48,16 +48,22 @@ All errors below are fatal — twig exits non-zero without invoking Terraform.
 
 ### References
 
+Applied against the **effective** context — leaf modules, effective merged
+`remote_state:` (inherited + leaf), and effective merged `vars:` (inherited).
+
 | Condition | Error |
 |---|---|
 | `${module.<key>.<field>}` where `<key>` is not a declared module instance in this leaf | fatal |
-| `${remote.<alias>.<field>}` where `<alias>` is not a declared `remote_state` alias in this leaf | fatal |
-| `${vars.<name>}` where `<name>` is not present in the merged `vars:` section of the `vars.yaml` chain | fatal |
+| `${remote.<alias>.<field>}` where `<alias>` is not present in the effective merged `remote_state:` for this leaf | fatal |
+| `${vars.<name>}` where `<name>` is not present in the effective merged `vars:` for this leaf | fatal |
 
-### Inherited vars
+### Inherited (vars.yaml)
 
 | Condition | Error |
 |---|---|
-| Unknown top-level key in a `vars.yaml` file (only `vars:` is accepted; `module_defaults:` and `remote_state:` will be added in PR 2) | fatal |
+| Unknown top-level key in a `vars.yaml` file (only `vars:`, `remote_state:`, and `module_defaults:` are accepted) | fatal |
 | Reserved path variable used as a key inside a `vars.yaml` file's `vars:` block | fatal |
-| Reference (`${module.x.y}`, `${remote.x.y}`, `${vars.x}`) appears inside a `vars.yaml` value | fatal |
+| Reserved path variable used as a key inside any `module_defaults.<source>` map | fatal |
+| Reserved ref namespace (`module`, `remote`, `vars`) used as a `remote_state` alias in `vars.yaml` | fatal |
+| Reference (`${module.x.y}`, `${remote.x.y}`, `${vars.x}`) appears inside a `vars:` value in `vars.yaml` (references are permitted only inside `module_defaults.<source>.<var>` values) | fatal |
+| `remote_state` alias in `vars.yaml` maps to a leaf path that does not match the path convention (checked lazily — only when the alias is actually referenced and the data block is emitted) | fatal |

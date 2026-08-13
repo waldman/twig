@@ -78,7 +78,7 @@ func run(args []string) error {
 		return err
 	}
 
-	l.InheritedVars, err = leaf.LoadInheritedVars(cfg.Root, seg)
+	l.Inherited, err = leaf.LoadInherited(cfg.Root, seg)
 	if err != nil {
 		return err
 	}

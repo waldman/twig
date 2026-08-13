@@ -147,16 +147,101 @@ func providerValToHCL(v interface{}, seg *pathparse.Segments) string {
 	}
 }
 
+// emptyInherited is used when a Leaf has no Inherited populated (e.g. in tests).
+func emptyInherited() *leaf.Inherited {
+	return &leaf.Inherited{
+		Vars:                  map[string]interface{}{},
+		VarsOrigins:           map[string]string{},
+		RemoteState:           map[string]string{},
+		RemoteStateOrigins:    map[string]string{},
+		ModuleDefaults:        map[string]map[string]interface{}{},
+		ModuleDefaultsOrigins: map[string]map[string]string{},
+	}
+}
+
+// effectiveRemoteState merges inherited remote_state overlaid by the leaf's
+// own remote_state block. Leaf wins per alias.
+func effectiveRemoteState(l *leaf.Leaf, inh *leaf.Inherited) map[string]string {
+	m := make(map[string]string, len(inh.RemoteState)+len(l.RemoteState))
+	for k, v := range inh.RemoteState {
+		m[k] = v
+	}
+	for k, v := range l.RemoteState {
+		m[k] = v
+	}
+	return m
+}
+
+// effectiveModuleVars merges inherited module_defaults[mod.Source] overlaid by
+// the leaf's own modules.<instance>.vars. Leaf wins per key.
+func effectiveModuleVars(mod *leaf.Module, inh *leaf.Inherited) map[string]interface{} {
+	result := make(map[string]interface{})
+	if defaults, ok := inh.ModuleDefaults[mod.Source]; ok {
+		for k, v := range defaults {
+			result[k] = v
+		}
+	}
+	for k, v := range mod.Vars {
+		result[k] = v
+	}
+	return result
+}
+
+// effectiveModuleVarsWithOrigins is like effectiveModuleVars but also returns
+// per-key origin strings for provenance comments.
+func effectiveModuleVarsWithOrigins(instanceKey string, mod *leaf.Module, inh *leaf.Inherited) (map[string]interface{}, map[string]string) {
+	values := make(map[string]interface{})
+	origins := make(map[string]string)
+	if defaults, ok := inh.ModuleDefaults[mod.Source]; ok {
+		defaultsOrigins := inh.ModuleDefaultsOrigins[mod.Source]
+		for k, v := range defaults {
+			values[k] = v
+			origins[k] = fmt.Sprintf("%s: module_defaults.%q", defaultsOrigins[k], mod.Source)
+		}
+	}
+	leafOrigin := fmt.Sprintf("leaf: modules.%s.vars", instanceKey)
+	for k, v := range mod.Vars {
+		values[k] = v
+		origins[k] = leafOrigin
+	}
+	return values, origins
+}
+
+// collectReferencedRemoteAliases walks the effective vars of every module in
+// the leaf and returns the set of remote_state aliases actually referenced.
+// Only referenced aliases produce data blocks in the generated main.tf.
+func collectReferencedRemoteAliases(l *leaf.Leaf, inh *leaf.Inherited) map[string]bool {
+	referenced := make(map[string]bool)
+	for _, key := range l.ModuleKeys {
+		effVars := effectiveModuleVars(l.Modules[key], inh)
+		_ = walkRefs(effVars, func(ns, alias, field string) error {
+			if ns == "remote" {
+				referenced[alias] = true
+			}
+			return nil
+		})
+	}
+	return referenced
+}
+
 // Generate produces the content of main.tf for the given leaf.
 func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string, error) {
-	resolve := makeResolver(l.Modules, l.RemoteState)
+	inh := l.Inherited
+	if inh == nil {
+		inh = emptyInherited()
+	}
 
-	if err := validateInheritedVars(l.InheritedVars); err != nil {
+	if err := validateInheritedVars(inh.Vars); err != nil {
 		return "", err
 	}
 
+	effRemote := effectiveRemoteState(l, inh)
+	resolve := makeResolver(l.Modules, effRemote)
+
+	// Validate refs in every module's effective vars (defaults + leaf).
 	for _, key := range l.ModuleKeys {
-		if err := validateRefs(key, l.Modules[key].Vars, l.Modules, l.RemoteState, l.InheritedVars); err != nil {
+		effVars := effectiveModuleVars(l.Modules[key], inh)
+		if err := validateRefs(key, effVars, l.Modules, effRemote, inh.Vars); err != nil {
 			return "", err
 		}
 	}
@@ -166,17 +251,19 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 		return "", err
 	}
 
+	referencedRemotes := collectReferencedRemoteAliases(l, inh)
+
 	var b strings.Builder
 
 	writeTerraformBlock(&b, cfg, seg, providers)
 	writeProviderBlocks(&b, providers, seg)
 
-	if err := writeRemoteStateBlocks(&b, cfg, l); err != nil {
+	if err := writeReferencedRemoteStateBlocks(&b, cfg, effRemote, referencedRemotes); err != nil {
 		return "", err
 	}
 
 	for _, key := range l.ModuleKeys {
-		if err := writeModuleBlock(&b, key, l.Modules[key], l.InheritedVars, seg, cfg, resolve); err != nil {
+		if err := writeModuleBlock(&b, key, l.Modules[key], inh, seg, cfg, resolve); err != nil {
 			return "", err
 		}
 	}
@@ -184,6 +271,9 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 	return b.String(), nil
 }
 
+// validateInheritedVars enforces that ${...} references do not appear inside
+// vars.yaml `vars:` values. References ARE permitted inside `module_defaults`
+// values (which are validated per-consuming-leaf via validateRefs).
 func validateInheritedVars(vars map[string]interface{}) error {
 	return walkRefs(vars, func(ns, key, field string) error {
 		return fmt.Errorf("inherited vars: references (${%s.%s...}) are not supported in vars.yaml", ns, key)
@@ -233,9 +323,23 @@ func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.
 	b.WriteString("}\n\n")
 }
 
-func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf) error {
-	for _, alias := range l.RemoteStateKeys {
-		leafPath := l.RemoteState[alias]
+// writeReferencedRemoteStateBlocks emits one data "terraform_remote_state" block
+// per alias in `referenced`, resolving each alias against the effective merged
+// remote_state map. Emission order is alphabetical among referenced aliases.
+// Aliases in `referenced` but missing from `effRemote` fail with a validation
+// error — that case is normally caught earlier by validateRefs.
+func writeReferencedRemoteStateBlocks(b *strings.Builder, cfg *config.Config, effRemote map[string]string, referenced map[string]bool) error {
+	aliases := make([]string, 0, len(referenced))
+	for a := range referenced {
+		aliases = append(aliases, a)
+	}
+	sort.Strings(aliases)
+
+	for _, alias := range aliases {
+		leafPath, ok := effRemote[alias]
+		if !ok {
+			return fmt.Errorf("remote_state %q: referenced but no matching alias in effective remote_state", alias)
+		}
 		absLeaf := filepath.Join(cfg.Root, leafPath)
 		remoteSeg, err := pathparse.Parse(cfg.Root, absLeaf)
 		if err != nil {
@@ -263,41 +367,38 @@ func writeRemoteStateBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf
 	return nil
 }
 
-func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inherited map[string]interface{}, seg *pathparse.Segments, cfg *config.Config, resolve func(string, string, string) string) error {
+func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inh *leaf.Inherited, seg *pathparse.Segments, cfg *config.Config, resolve func(string, string, string) string) error {
 	srcPath := cfg.ModuleSource(mod.Source)
 
 	b.WriteString(fmt.Sprintf("module %q {\n", key))
 	b.WriteString(fmt.Sprintf("  source = %q\n\n", srcPath))
 
-	b.WriteString(fmt.Sprintf("  cloud       = %q\n", seg.Cloud))
-	b.WriteString(fmt.Sprintf("  profile     = %q\n", seg.Profile))
-	b.WriteString(fmt.Sprintf("  region      = %q\n", seg.Region))
-	b.WriteString(fmt.Sprintf("  environment = %q\n", seg.Environment))
-	b.WriteString(fmt.Sprintf("  class       = %q\n", seg.Class))
-	b.WriteString(fmt.Sprintf("  component   = %q\n", seg.Component))
-	b.WriteString(fmt.Sprintf("  module      = %q\n", key))
+	// Seven path variables, always present, always origin "path".
+	b.WriteString(fmt.Sprintf("  cloud       = %q  # from: path\n", seg.Cloud))
+	b.WriteString(fmt.Sprintf("  profile     = %q  # from: path\n", seg.Profile))
+	b.WriteString(fmt.Sprintf("  region      = %q  # from: path\n", seg.Region))
+	b.WriteString(fmt.Sprintf("  environment = %q  # from: path\n", seg.Environment))
+	b.WriteString(fmt.Sprintf("  class       = %q  # from: path\n", seg.Class))
+	b.WriteString(fmt.Sprintf("  component   = %q  # from: path\n", seg.Component))
+	b.WriteString(fmt.Sprintf("  module      = %q  # from: path\n", key))
 
-	// Only the leaf's module vars are emitted as module arguments. Inherited
-	// vars (from the vars.yaml hierarchy) are reference-only via ${vars.x}
-	// and are resolved inline by toHCL — they are not auto-injected here.
-	allVars := make(map[string]interface{}, len(mod.Vars))
-	for k, v := range mod.Vars {
-		allVars[k] = v
-	}
+	// Effective vars: inherited module_defaults[mod.Source] overlaid by the
+	// leaf's own modules.<key>.vars. Leaf wins per key.
+	values, origins := effectiveModuleVarsWithOrigins(key, mod, inh)
 
-	if len(allVars) > 0 {
+	if len(values) > 0 {
 		b.WriteString("\n")
-		keys := make([]string, 0, len(allVars))
-		for k := range allVars {
+		keys := make([]string, 0, len(values))
+		for k := range values {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			hcl, err := toHCL(allVars[k], resolve, inherited)
+			hcl, err := toHCL(values[k], resolve, inh.Vars)
 			if err != nil {
 				return fmt.Errorf("module %q var %q: %w", key, k, err)
 			}
-			b.WriteString(fmt.Sprintf("  %s = %s\n", k, hcl))
+			b.WriteString(fmt.Sprintf("  %s = %s  # from: %s\n", k, hcl, origins[k]))
 		}
 	}
 
