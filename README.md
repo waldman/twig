@@ -140,7 +140,7 @@ twig errors if `providers.yaml` is missing for a leaf's cloud.
 
 ## Inherited variables
 
-Place a `vars.yaml` at any directory level under `infra/` to inject variables into every module in leaves below that point:
+Place a `vars.yaml` at any directory level under `infra/` to declare values that leaves below that point can reference by name:
 
 ```
 infra/vars.yaml                                          ← all clouds
@@ -150,34 +150,38 @@ infra/aws/myprofile/us-east-1/production/vars.yaml       ← all production leav
 infra/aws/myprofile/us-east-1/production/services/vars.yaml  ← all service leaves
 ```
 
-Example:
+Values live under a top-level `vars:` key:
 
 ```yaml
 # infra/aws/vars.yaml
-cost_center: engineering
-vpn_cidr: 10.30.0.0/16
-default_tags:
-  ManagedBy: twig
+vars:
+  cost_center: engineering
+  vpn_cidr:    10.30.0.0/16
+  default_tags:
+    ManagedBy: twig
 ```
 
-Reference inherited vars in leaf files with `${var.<name>}`:
+Reference inherited vars in leaf files with `${vars.<name>}`:
 
 ```yaml
 modules:
   sg:
     source: aws/5/security-group
     vars:
-      sg_ingress_cidr: ${var.vpn_cidr}
+      sg_ingress_cidr: ${vars.vpn_cidr}
 ```
 
-A pure `${var.x}` expands to the correct HCL for its type (string, bool, number, list, map). Embedded in a string it is interpolated as its string representation.
+A pure `${vars.x}` expands to the correct HCL for its type (string, bool, number, list, map). Embedded in a string it is interpolated as its string representation.
+
+Inherited variables are **not** automatically injected into modules — they are available only through explicit `${vars.<name>}` references. This means a `vars.yaml` may hold values used by only some leaves without breaking others.
 
 Merge rules:
 - Lower levels (closer to the leaf) override higher levels.
-- Module-level `vars:` in the leaf always override inherited values.
-- Reserved path variable names (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) are rejected at load time.
-- The ref namespace names (`module`, `remote`, `var`) are reserved and cannot be used as module instance keys or remote_state aliases.
-- References (`${module.x.y}`, `${remote.x.y}`, `${var.x}`) are not supported inside `vars.yaml` files.
+- Module-level `vars:` in the leaf always override inherited values via `${vars.x}` for the same key.
+- Only `vars:` is accepted as a top-level key in `vars.yaml` (further sections reserved for future use).
+- Reserved path variable names (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) are rejected inside the `vars:` block.
+- The ref namespace names (`module`, `remote`, `vars`) are reserved and cannot be used as module instance keys or remote_state aliases.
+- References (`${module.x.y}`, `${remote.x.y}`, `${vars.x}`) are not supported inside `vars.yaml` values.
 
 ## Leaf file format
 
@@ -195,7 +199,7 @@ References use explicit namespace prefixes:
 |---|---|
 | `${module.ec2.vpc_id}` | `module.ec2.vpc_id` |
 | `${remote.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
-| `${var.vpn_cidr}` | value from inherited `vars.yaml` |
+| `${vars.vpn_cidr}` | value from the merged `vars:` section in `vars.yaml` |
 
 ```yaml
 modules:

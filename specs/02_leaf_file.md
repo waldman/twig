@@ -27,7 +27,7 @@ modules:
   Terraform module label (`module "<instance_key>"`) and the `module`
   variable injected into that module call.
 - `instance_key` must not be one of the reserved ref namespaces (`module`,
-  `remote`, `var`).
+  `remote`, `vars`).
 - `source` is resolved against `modules_path` (see
   `specs/01_project_config.md`) — local directory for local `modules_path`,
   git URL for git `modules_path`.
@@ -47,7 +47,7 @@ remote_state:
 ```
 
 - Aliases must not conflict with module instance keys.
-- Aliases must not be reserved ref namespaces (`module`, `remote`, `var`).
+- Aliases must not be reserved ref namespaces (`module`, `remote`, `vars`).
 - The same backend config (bucket, region, profile) is used; only the `key`
   changes to point at the target leaf's state file.
 
@@ -61,7 +61,7 @@ namespaces exist:
 |---|---|
 | `${module.<instance>.<output>}` | `module.<instance>.<output>` (intra-leaf) |
 | `${remote.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` (cross-leaf) |
-| `${var.<name>}` | value from inherited `vars.yaml` (see `specs/07_inherited_vars.md`) |
+| `${vars.<name>}` | value from the merged `vars:` section in the `vars.yaml` hierarchy (see `specs/07_inherited_vars.md`) |
 
 A **pure** reference — the entire value string is one `${...}` token —
 becomes an unquoted HCL expression whose type matches the underlying value.

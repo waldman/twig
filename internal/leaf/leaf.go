@@ -26,7 +26,7 @@ var reservedVars = map[string]bool{
 var reservedKeys = map[string]bool{
 	"module": true,
 	"remote": true,
-	"var":    true,
+	"vars":   true,
 }
 
 type Module struct {
@@ -108,10 +108,22 @@ func Load(leafFile string) (*Leaf, error) {
 	return l, nil
 }
 
+// varsYamlAllowedTopLevel — accepted top-level keys in a vars.yaml file.
+// PR 2 will add "module_defaults" and "remote_state".
+var varsYamlAllowedTopLevel = map[string]bool{
+	"vars": true,
+}
+
+type varsYamlFile struct {
+	Vars  map[string]interface{}            `yaml:"vars"`
+	Extra map[string]yaml.Node              `yaml:",inline"`
+}
+
 // LoadInheritedVars walks from infra/ down through each path segment, merging
-// any vars.yaml files found. Lower levels (closer to the leaf) override higher
-// ones. Missing files are silently skipped. Reserved path variable names are
-// rejected.
+// the `vars:` section of any vars.yaml files found. Lower levels (closer to
+// the leaf) override higher ones. Missing files are silently skipped.
+// Reserved path variable names are rejected as keys inside `vars:`, and any
+// unknown top-level key in a vars.yaml is rejected.
 func LoadInheritedVars(root string, seg *pathparse.Segments) (map[string]interface{}, error) {
 	dirs := []string{
 		filepath.Join(root, "infra"),
@@ -132,13 +144,18 @@ func LoadInheritedVars(root string, seg *pathparse.Segments) (map[string]interfa
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		var vars map[string]interface{}
-		if err := yaml.Unmarshal(data, &vars); err != nil {
+		var file varsYamlFile
+		if err := yaml.Unmarshal(data, &file); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
-		for k, v := range vars {
+		for k := range file.Extra {
+			if !varsYamlAllowedTopLevel[k] {
+				return nil, fmt.Errorf("%s: unknown top-level key %q (only \"vars\" is accepted)", path, k)
+			}
+		}
+		for k, v := range file.Vars {
 			if reservedVars[k] {
-				return nil, fmt.Errorf("%s: %q is a reserved path variable and cannot be used in vars.yaml", path, k)
+				return nil, fmt.Errorf("%s: %q is a reserved path variable and cannot be used inside vars:", path, k)
 			}
 			merged[k] = v
 		}

@@ -40,7 +40,7 @@ All errors below are fatal — twig exits non-zero without invoking Terraform.
 | Condition | Error |
 |---|---|
 | Reserved path variable (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) used as a key in `vars` | fatal |
-| Reserved ref namespace (`module`, `remote`, `var`) used as a module instance key | fatal |
+| Reserved ref namespace (`module`, `remote`, `vars`) used as a module instance key | fatal |
 | Reserved ref namespace used as a `remote_state` alias | fatal |
 | `remote_state` alias conflicts with a module instance key in the same leaf | fatal |
 | `remote_state` leaf path does not match the path convention | fatal |
@@ -52,11 +52,12 @@ All errors below are fatal — twig exits non-zero without invoking Terraform.
 |---|---|
 | `${module.<key>.<field>}` where `<key>` is not a declared module instance in this leaf | fatal |
 | `${remote.<alias>.<field>}` where `<alias>` is not a declared `remote_state` alias in this leaf | fatal |
-| `${var.<name>}` where `<name>` is not present in the merged inherited `vars.yaml` chain | fatal |
+| `${vars.<name>}` where `<name>` is not present in the merged `vars:` section of the `vars.yaml` chain | fatal |
 
 ### Inherited vars
 
 | Condition | Error |
 |---|---|
-| Reserved path variable used as a key in any `vars.yaml` | fatal |
-| Reference (`${module.x.y}`, `${remote.x.y}`, `${var.x}`) appears inside a `vars.yaml` value | fatal |
+| Unknown top-level key in a `vars.yaml` file (only `vars:` is accepted; `module_defaults:` and `remote_state:` will be added in PR 2) | fatal |
+| Reserved path variable used as a key inside a `vars.yaml` file's `vars:` block | fatal |
+| Reference (`${module.x.y}`, `${remote.x.y}`, `${vars.x}`) appears inside a `vars.yaml` value | fatal |

@@ -16,10 +16,10 @@ import (
 )
 
 // refRe matches the three explicit ref forms:
-//   ${module.ec2.vpc_id}   → ns=module, key=ec2,  field=vpc_id
-//   ${remote.vpc.vpc_id}   → ns=remote, key=vpc,  field=vpc_id
-//   ${var.vpn_cidr}        → ns=var,    key=vpn_cidr, field=""
-var refRe = regexp.MustCompile(`\$\{(module|remote|var)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
+//   ${module.ec2.vpc_id}   → ns=module, key=ec2,       field=vpc_id
+//   ${remote.vpc.vpc_id}   → ns=remote, key=vpc,       field=vpc_id
+//   ${vars.vpn_cidr}       → ns=vars,   key=vpn_cidr,  field=""
+var refRe = regexp.MustCompile(`\$\{(module|remote|vars)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
 
 type providerEntry struct {
 	Source string                 `yaml:"source"`
@@ -277,11 +277,10 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inherite
 	b.WriteString(fmt.Sprintf("  component   = %q\n", seg.Component))
 	b.WriteString(fmt.Sprintf("  module      = %q\n", key))
 
-	// Merge inherited vars and module vars; module vars override inherited.
-	allVars := make(map[string]interface{}, len(inherited)+len(mod.Vars))
-	for k, v := range inherited {
-		allVars[k] = v
-	}
+	// Only the leaf's module vars are emitted as module arguments. Inherited
+	// vars (from the vars.yaml hierarchy) are reference-only via ${vars.x}
+	// and are resolved inline by toHCL — they are not auto-injected here.
+	allVars := make(map[string]interface{}, len(mod.Vars))
 	for k, v := range mod.Vars {
 		allVars[k] = v
 	}
@@ -334,7 +333,7 @@ func stringToHCL(s string, resolve func(string, string, string) string, inherite
 	// pure reference: entire string is exactly one ref token
 	if m := refRe.FindStringSubmatch(s); m != nil && m[0] == s {
 		ns, key, field := m[1], m[2], m[3]
-		if ns == "var" {
+		if ns == "vars" {
 			hcl, err := toHCL(inherited[key], resolve, inherited)
 			if err != nil {
 				return fmt.Sprintf("%q", fmt.Sprintf("%v", inherited[key]))
@@ -348,7 +347,7 @@ func stringToHCL(s string, resolve func(string, string, string) string, inherite
 	result := refRe.ReplaceAllStringFunc(s, func(match string) string {
 		sub := refRe.FindStringSubmatch(match)
 		ns, key, field := sub[1], sub[2], sub[3]
-		if ns == "var" {
+		if ns == "vars" {
 			return fmt.Sprintf("%v", inherited[key])
 		}
 		return "${" + resolve(ns, key, field) + "}"
@@ -397,9 +396,9 @@ func validateRefs(moduleKey string, vars map[string]interface{}, modules map[str
 			if _, ok := remoteState[key]; !ok {
 				return fmt.Errorf("module %q: ${remote.%s.%s} references undeclared remote_state alias %q", moduleKey, key, field, key)
 			}
-		case "var":
+		case "vars":
 			if _, ok := inherited[key]; !ok {
-				return fmt.Errorf("module %q: ${var.%s} references undeclared inherited variable %q", moduleKey, key, key)
+				return fmt.Errorf("module %q: ${vars.%s} references undeclared inherited variable %q", moduleKey, key, key)
 			}
 		}
 		return nil
