@@ -77,7 +77,7 @@ func TestLoad_reservedVar(t *testing.T) {
 }
 
 func TestLoad_reservedInstanceKey(t *testing.T) {
-	for _, key := range []string{"module", "remote", "var"} {
+	for _, key := range []string{"module", "remote", "vars"} {
 		t.Run(key, func(t *testing.T) {
 			path := writeLeaf(t, "modules:\n  "+key+":\n    source: aws/5/x\n")
 			_, err := Load(path)
@@ -185,7 +185,7 @@ func TestLoadInheritedVars_noFiles(t *testing.T) {
 
 func TestLoadInheritedVars_singleLevel(t *testing.T) {
 	root, seg := makeInfraTree(t)
-	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "cost_center: engineering\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "vars:\n  cost_center: engineering\n")
 
 	vars, err := LoadInheritedVars(root, seg)
 	if err != nil {
@@ -198,8 +198,8 @@ func TestLoadInheritedVars_singleLevel(t *testing.T) {
 
 func TestLoadInheritedVars_lowerWins(t *testing.T) {
 	root, seg := makeInfraTree(t)
-	writeVarsYAML(t, filepath.Join(root, "infra"), "tier: base\n")
-	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1", "production"), "tier: prod-override\n")
+	writeVarsYAML(t, filepath.Join(root, "infra"), "vars:\n  tier: base\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1", "production"), "vars:\n  tier: prod-override\n")
 
 	vars, err := LoadInheritedVars(root, seg)
 	if err != nil {
@@ -212,8 +212,8 @@ func TestLoadInheritedVars_lowerWins(t *testing.T) {
 
 func TestLoadInheritedVars_mergeAcrossLevels(t *testing.T) {
 	root, seg := makeInfraTree(t)
-	writeVarsYAML(t, filepath.Join(root, "infra"), "cost_center: engineering\n")
-	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"), "vpc_id: vpc-abc123\n")
+	writeVarsYAML(t, filepath.Join(root, "infra"), "vars:\n  cost_center: engineering\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"), "vars:\n  vpc_id: vpc-abc123\n")
 
 	vars, err := LoadInheritedVars(root, seg)
 	if err != nil {
@@ -229,10 +229,46 @@ func TestLoadInheritedVars_mergeAcrossLevels(t *testing.T) {
 
 func TestLoadInheritedVars_reservedVarRejected(t *testing.T) {
 	root, seg := makeInfraTree(t)
-	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "region: us-west-2\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "vars:\n  region: us-west-2\n")
 
 	_, err := LoadInheritedVars(root, seg)
 	if err == nil {
 		t.Fatal("expected error for reserved var name, got nil")
+	}
+}
+
+func TestLoadInheritedVars_unknownTopLevelKeyRejected(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "cost_center: engineering\n")
+
+	_, err := LoadInheritedVars(root, seg)
+	if err == nil {
+		t.Fatal("expected error for unknown top-level key, got nil")
+	}
+}
+
+func TestLoadInheritedVars_emptyFile(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "")
+
+	vars, err := LoadInheritedVars(root, seg)
+	if err != nil {
+		t.Fatalf("empty vars.yaml should be accepted, got: %v", err)
+	}
+	if len(vars) != 0 {
+		t.Errorf("expected empty map, got %v", vars)
+	}
+}
+
+func TestLoadInheritedVars_emptyVarsBlock(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), "vars:\n")
+
+	vars, err := LoadInheritedVars(root, seg)
+	if err != nil {
+		t.Fatalf("empty vars: block should be accepted, got: %v", err)
+	}
+	if len(vars) != 0 {
+		t.Errorf("expected empty map, got %v", vars)
 	}
 }

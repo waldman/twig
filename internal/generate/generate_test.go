@@ -245,8 +245,8 @@ func TestStringToHCL(t *testing.T) {
 		{"${module.x.arn}", "module.x.arn"},
 		{"${module.x.arn}/*", `"${module.x.arn}/*"`},
 		{"prefix-${module.x.arn}-suffix", `"prefix-${module.x.arn}-suffix"`},
-		{"${var.vpn_cidr}", `"10.30.0.0/16"`},
-		{"cidr:${var.vpn_cidr}/32", `"cidr:10.30.0.0/16/32"`},
+		{"${vars.vpn_cidr}", `"10.30.0.0/16"`},
+		{"cidr:${vars.vpn_cidr}/32", `"cidr:10.30.0.0/16/32"`},
 	}
 
 	for _, tc := range cases {
@@ -440,14 +440,9 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 	}
 }
 
-func TestGenerate_inheritedVars(t *testing.T) {
-	// Write a vars.yaml at the cloud level for this test
-	cloudDir := filepath.Join(testCfg.Root, "infra", "aws")
-	if err := os.WriteFile(filepath.Join(cloudDir, "vars.yaml"), []byte("cost_center: engineering\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(filepath.Join(cloudDir, "vars.yaml")) })
-
+func TestGenerate_inheritedVarsNotAutoInjected(t *testing.T) {
+	// Inherited vars must NOT be auto-injected into module blocks. They are
+	// available only through explicit ${vars.x} references in module vars.
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
 	l.InheritedVars = map[string]interface{}{"cost_center": "engineering"}
 
@@ -455,26 +450,44 @@ func TestGenerate_inheritedVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `cost_center = "engineering"`) {
-		t.Errorf("inherited var missing from output:\n%s", out)
+	if strings.Contains(out, "cost_center") {
+		t.Errorf("inherited var must not be auto-injected without explicit ${vars.x} reference:\n%s", out)
 	}
 }
 
-func TestGenerate_inheritedVarsModuleWins(t *testing.T) {
+func TestGenerate_varsRefResolvesToInherited(t *testing.T) {
+	// ${vars.x} in a leaf's module vars resolves to the inherited value.
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
-		"ec2": {Source: "aws/5/ec2", Vars: map[string]interface{}{"cost_center": "override"}},
+		"ec2": {Source: "aws/5/ec2", Vars: map[string]interface{}{
+			"ec2_cost_center": "${vars.cost_center}",
+		}},
 	})
-	l.InheritedVars = map[string]interface{}{"cost_center": "inherited"}
+	l.InheritedVars = map[string]interface{}{"cost_center": "engineering"}
 
 	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `cost_center = "override"`) {
-		t.Errorf("module var should override inherited:\n%s", out)
+	if !strings.Contains(out, `ec2_cost_center = "engineering"`) {
+		t.Errorf("${vars.cost_center} did not resolve to inherited value:\n%s", out)
 	}
-	if strings.Contains(out, `cost_center = "inherited"`) {
-		t.Errorf("inherited value should be overridden:\n%s", out)
+}
+
+func TestGenerate_varsRefUndeclared(t *testing.T) {
+	// ${vars.x} where x is not in the merged vars: section is a fatal error.
+	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
+		"ec2": {Source: "aws/5/ec2", Vars: map[string]interface{}{
+			"ec2_tag": "${vars.nonexistent}",
+		}},
+	})
+	l.InheritedVars = map[string]interface{}{}
+
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil {
+		t.Fatal("expected error for undeclared vars ref, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should mention undeclared var name, got: %v", err)
 	}
 }
 
