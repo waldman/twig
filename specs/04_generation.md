@@ -2,15 +2,20 @@
 
 ## Generated main.tf structure
 
+Blocks are emitted in this order: `terraform`, `provider` (one per cloud),
+`data "terraform_remote_state"` (one per `remote_state:` alias, declaration
+order), `module` (one per `modules:` entry, declaration order).
+
 ### 1. terraform block
 
 ```hcl
 terraform {
   required_version = ">= 1.1"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+    # one entry per distinct cloud used by the leaf's modules
+    <provider-hcl-name> = {
+      source  = "<registry-source>"
+      version = "~> <major>.0"
     }
   }
   backend "s3" {
@@ -20,12 +25,20 @@ terraform {
 }
 ```
 
-### 2. provider block
+`required_providers` is populated from `infra/<cloud>/providers.yaml` for
+each cloud used by the leaf (see `specs/08_providers.md`). The `<major>`
+segment in the version constraint comes from the module source path — e.g.
+a module sourced from `aws/5/vpc` yields `version = "~> 5.0"`.
+
+### 2. provider blocks
+
+One block per distinct cloud used by the leaf's modules. Config values are
+taken from `infra/<cloud>/providers.yaml`, with `${cloud|profile|region|environment|class|component}`
+path-variable substitutions applied.
 
 ```hcl
-provider "aws" {
-  profile = "<profile>"
-  region  = "<region>"
+provider "<provider-hcl-name>" {
+  <key> = <value>
 }
 ```
 
@@ -49,7 +62,7 @@ One block per module entry, in declaration order:
 
 ```hcl
 module "<instance_key>" {
-  source = "<absolute-path-to-module>"
+  source = "<module-source>"       # absolute filesystem path or git:: URL
 
   cloud       = "<cloud>"
   profile     = "<profile>"
@@ -59,7 +72,8 @@ module "<instance_key>" {
   component   = "<component>"
   module      = "<instance_key>"
 
-  # user vars with cross-refs resolved
+  # inherited vars from vars.yaml hierarchy (see specs/07_inherited_vars.md)
+  # and user vars from the leaf's modules.<instance>.vars, with references resolved
   <variable_name> = <value>
 }
 ```

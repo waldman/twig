@@ -26,7 +26,11 @@ modules:
 - `instance_key` must be unique within the file. It becomes both the
   Terraform module label (`module "<instance_key>"`) and the `module`
   variable injected into that module call.
-- `source` is resolved against `modules_path` to an absolute directory.
+- `instance_key` must not be one of the reserved ref namespaces (`module`,
+  `remote`, `var`).
+- `source` is resolved against `modules_path` (see
+  `specs/01_project_config.md`) — local directory for local `modules_path`,
+  git URL for git `modules_path`.
 - All seven path variables are injected automatically and cannot appear
   in `vars`.
 - `vars` values are strings, numbers, booleans, lists, or maps.
@@ -42,22 +46,34 @@ remote_state:
   <alias>: <path-to-leaf.yaml relative to project root>
 ```
 
-Aliases must not conflict with module instance keys. The same backend config
-(bucket, region, profile) is used; only the `key` changes to point at the
-target leaf's state file.
+- Aliases must not conflict with module instance keys.
+- Aliases must not be reserved ref namespaces (`module`, `remote`, `var`).
+- The same backend config (bucket, region, profile) is used; only the `key`
+  changes to point at the target leaf's state file.
 
-### Cross-module references
+### References
 
-A value containing `${alias.output_name}` is a cross-ref. The alias can be
-either a module instance key (intra-leaf) or a `remote_state` alias
-(cross-leaf). The syntax is identical; twig resolves them differently:
+Values may contain `${<ns>.<key>[.<field>]}` references. The namespace prefix
+is required — twig does not resolve unqualified `${x.y}` references. Three
+namespaces exist:
 
-| YAML value | Context | Generated HCL |
-|---|---|---|
-| `${x.bucket_arn}` | `x` is a module key | `module.x.bucket_arn` |
-| `${vpc.vpc_id}` | `vpc` is a remote state alias | `data.terraform_remote_state.vpc.outputs.vpc_id` |
-| `${x.bucket_arn}/*` | either | `"${module.x.bucket_arn}/*"` (interpolated string) |
-| `arn:aws:s3:::my-bucket` | — | `"arn:aws:s3:::my-bucket"` (string literal) |
+| Form | Resolves to |
+|---|---|
+| `${module.<instance>.<output>}` | `module.<instance>.<output>` (intra-leaf) |
+| `${remote.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` (cross-leaf) |
+| `${var.<name>}` | value from inherited `vars.yaml` (see `specs/07_inherited_vars.md`) |
+
+A **pure** reference — the entire value string is one `${...}` token —
+becomes an unquoted HCL expression whose type matches the underlying value.
+A reference **embedded** in a longer string becomes an interpolated Terraform
+string.
+
+| YAML value | Generated HCL |
+|---|---|
+| `${module.x.bucket_arn}` | `module.x.bucket_arn` |
+| `${remote.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${module.x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` |
+| `arn:aws:s3:::my-bucket` | `"arn:aws:s3:::my-bucket"` |
 
 ### Example
 
@@ -86,13 +102,13 @@ modules:
   iam_cicd_policy:
     source: aws/5/iam-policy
     vars:
-      iam_policy_user_name: ${iam_cicd.user_name}
+      iam_policy_user_name: ${module.iam_cicd.user_name}
       iam_policy_statements:
         - effect: Allow
           actions: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
           resources:
-            - ${s3_bucket.bucket_arn}
-            - ${s3_bucket.bucket_arn}/*
+            - ${module.s3_bucket.bucket_arn}
+            - ${module.s3_bucket.bucket_arn}/*
 
   iam_infra:
     source: aws/5/iam-user
@@ -100,17 +116,17 @@ modules:
   iam_infra_policy:
     source: aws/5/iam-policy
     vars:
-      iam_policy_user_name: ${iam_infra.user_name}
+      iam_policy_user_name: ${module.iam_infra.user_name}
       iam_policy_statements:
         - effect: Allow
           actions: [s3:GetObject, s3:ListBucket]
           resources:
-            - ${s3_bucket.bucket_arn}
-            - ${s3_bucket.bucket_arn}/*
+            - ${module.s3_bucket.bucket_arn}
+            - ${module.s3_bucket.bucket_arn}/*
         - effect: Allow
           actions: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:DescribeTable]
           resources:
-            - ${dynamodb.table_arn}
+            - ${module.dynamodb.table_arn}
 ```
 
 Note: `iam_cicd` and `iam_infra` require no `vars` — the `module` variable
@@ -130,8 +146,8 @@ modules:
   app:
     source: aws/5/ec2
     vars:
-      ec2_vpc_id:    ${vpc.vpc_id}
-      ec2_subnet_id: ${vpc.first_public_subnet_id}
+      ec2_vpc_id:    ${remote.vpc.vpc_id}
+      ec2_subnet_id: ${remote.vpc.first_public_subnet_id}
 ```
 
 twig generates a `data "terraform_remote_state" "vpc"` block that reads
