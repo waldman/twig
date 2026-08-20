@@ -16,10 +16,10 @@ import (
 )
 
 // refRe matches the three explicit ref forms:
-//   ${module.ec2.vpc_id}   → ns=module, key=ec2,       field=vpc_id
-//   ${remote.vpc.vpc_id}   → ns=remote, key=vpc,       field=vpc_id
-//   ${vars.vpn_cidr}       → ns=vars,   key=vpn_cidr,  field=""
-var refRe = regexp.MustCompile(`\$\{(module|remote|vars)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
+//   ${modules.ec2.vpc_id}  → ns=modules, key=ec2,       field=vpc_id
+//   ${remotes.vpc.vpc_id}  → ns=remotes, key=vpc,       field=vpc_id
+//   ${vars.vpn_cidr}       → ns=vars,    key=vpn_cidr,  field=""
+var refRe = regexp.MustCompile(`\$\{(modules|remotes|vars)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
 
 // outputNameRe extracts output block names from HCL files.
 var outputNameRe = regexp.MustCompile(`(?m)^output\s+"([^"]+)"`)
@@ -218,7 +218,7 @@ func collectReferencedRemoteAliases(l *leaf.Leaf, inh *leaf.Inherited) map[strin
 	for _, key := range l.ModuleKeys {
 		effVars := effectiveModuleVars(l.Modules[key], inh)
 		_ = walkRefs(effVars, func(ns, alias, field string) error {
-			if ns == "remote" {
+			if ns == "remotes" {
 				referenced[alias] = true
 			}
 			return nil
@@ -283,7 +283,7 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 // values (which are validated per-consuming-leaf via validateRefs).
 func validateInheritedVars(vars map[string]interface{}) error {
 	return walkRefs(vars, func(ns, key, field string) error {
-		return fmt.Errorf("inherited vars: references (${%s.%s...}) are not supported in vars.yaml", ns, key)
+		return fmt.Errorf("inherited vars: references (${%s.%s...}) are not supported in vars.yaml `vars:` section", ns, key)
 	})
 }
 
@@ -292,9 +292,9 @@ func validateInheritedVars(vars map[string]interface{}) error {
 func makeResolver(modules map[string]*leaf.Module, remoteState map[string]string) func(string, string, string) string {
 	return func(ns, key, field string) string {
 		switch ns {
-		case "remote":
+		case "remotes":
 			return "data.terraform_remote_state." + key + ".outputs." + field
-		default: // "module"
+		default: // "modules"
 			return "module." + key + "." + field
 		}
 	}
@@ -539,13 +539,13 @@ func mapToHCL(m map[string]interface{}, resolve func(string, string, string) str
 func validateRefs(moduleKey string, vars map[string]interface{}, modules map[string]*leaf.Module, remoteState map[string]string, inherited map[string]interface{}) error {
 	return walkRefs(vars, func(ns, key, field string) error {
 		switch ns {
-		case "module":
+		case "modules":
 			if _, ok := modules[key]; !ok {
-				return fmt.Errorf("module %q: ${module.%s.%s} references undeclared module %q", moduleKey, key, field, key)
+				return fmt.Errorf("module %q: ${modules.%s.%s} references undeclared module %q", moduleKey, key, field, key)
 			}
-		case "remote":
+		case "remotes":
 			if _, ok := remoteState[key]; !ok {
-				return fmt.Errorf("module %q: ${remote.%s.%s} references undeclared remote_state alias %q", moduleKey, key, field, key)
+				return fmt.Errorf("module %q: ${remotes.%s.%s} references undeclared remotes alias %q", moduleKey, key, field, key)
 			}
 		case "vars":
 			if _, ok := inherited[key]; !ok {

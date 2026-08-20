@@ -30,7 +30,7 @@ Every module call twig generates receives seven variables. Six come from the fil
 | `component` | filename (no `.yaml`) | `ansible-anchor` |
 | `module` | instance key in `modules:` | `iam_cicd` |
 
-All seven are reserved — they may not be declared in a leaf's `vars:` block, and the ref namespace names (`module`, `remote`, `vars`) may not be used as module instance keys or `remote_state` aliases.
+All seven are reserved — they may not be declared in a leaf's `vars:` block, and the ref namespace names (`modules`, `remotes`, `vars`) may not be used as module instance keys or `remotes` aliases.
 
 Modules that follow the convention take all seven as required input variables. Twig injects them automatically; you never type them in a leaf.
 
@@ -40,11 +40,11 @@ Values in a leaf's module vars can contain three kinds of references. The namesp
 
 | Reference | Resolves to | Where it points |
 |---|---|---|
-| `${module.<instance>.<output>}` | `module.<instance>.<output>` | Another module in the same leaf |
-| `${remote.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` | Another leaf's state |
+| `${modules.<instance>.<output>}` | `module.<instance>.<output>` | Another module in the same leaf |
+| `${remotes.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` | Another leaf's state |
 | `${vars.<name>}` | inlined value from inherited `vars:` | A `vars.yaml` up the hierarchy |
 
-Pure references (`value: ${module.x.y}`) become unquoted HCL expressions with the correct type. Embedded references (`value: "prefix-${module.x.y}-suffix"`) become interpolated strings.
+Pure references (`value: ${modules.x.y}`) become unquoted HCL expressions with the correct type. Embedded references (`value: "prefix-${modules.x.y}-suffix"`) become interpolated strings.
 
 ## The inheritance model
 
@@ -53,7 +53,7 @@ A `vars.yaml` file may live at any level of the `infra/` tree — at the root, p
 `vars.yaml` files carry three optional top-level sections:
 
 - **`vars:`** — key/value store, referenced from leaves via `${vars.<name>}`. Not auto-injected into modules; reference-only.
-- **`remote_state:`** — alias → leaf path. Extends the leaf's own `remote_state:` block so leaves don't have to redeclare shared upstream dependencies.
+- **`remotes:`** — alias → leaf path. Extends the leaf's own `remotes:` block so leaves don't have to redeclare shared upstream dependencies.
 - **`module_defaults:`** — default vars scoped to a specific module source (e.g. `aws/5/vpc`). Injected into every module instance matching that source; leaf `vars:` overrides per key.
 
 Merge rule everywhere: closer to the leaf wins per key. Map values are replaced wholesale — no deep merging inside a map value.
