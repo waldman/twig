@@ -21,6 +21,9 @@ import (
 //   ${vars.vpn_cidr}       → ns=vars,   key=vpn_cidr,  field=""
 var refRe = regexp.MustCompile(`\$\{(module|remote|vars)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
 
+// outputNameRe extracts output block names from HCL files.
+var outputNameRe = regexp.MustCompile(`(?m)^output\s+"([^"]+)"`)
+
 type providerEntry struct {
 	Source string                 `yaml:"source"`
 	Config map[string]interface{} `yaml:"config"`
@@ -268,6 +271,10 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 		}
 	}
 
+	if err := writeRootOutputBlocks(&b, cfg, l); err != nil {
+		return "", err
+	}
+
 	return b.String(), nil
 }
 
@@ -363,6 +370,49 @@ func writeReferencedRemoteStateBlocks(b *strings.Builder, cfg *config.Config, ef
 		b.WriteString(fmt.Sprintf("    %-12s= %q\n", "key", remoteSeg.StateKey()))
 		b.WriteString("  }\n")
 		b.WriteString("}\n\n")
+	}
+	return nil
+}
+
+// parseOutputNames reads an outputs.tf file and returns sorted output block names.
+// Returns nil (no error) if the file does not exist.
+func parseOutputNames(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	matches := outputNameRe.FindAllSubmatch(data, -1)
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		names = append(names, string(m[1]))
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// writeRootOutputBlocks emits one root-level output block per output found in
+// each local module's outputs.tf. These blocks are required so that
+// data "terraform_remote_state" consumers can read this leaf's outputs.
+// Git-sourced modules are skipped — their outputs.tf is not locally readable.
+func writeRootOutputBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf) error {
+	if cfg.IsGitSource() {
+		return nil
+	}
+	for _, key := range l.ModuleKeys {
+		mod := l.Modules[key]
+		outputsPath := filepath.Join(cfg.ModulesRoot(), mod.Source, "outputs.tf")
+		names, err := parseOutputNames(outputsPath)
+		if err != nil {
+			return fmt.Errorf("module %q: reading outputs.tf: %w", key, err)
+		}
+		for _, name := range names {
+			b.WriteString(fmt.Sprintf("output %q {\n", name))
+			b.WriteString(fmt.Sprintf("  value = module.%s.%s\n", key, name))
+			b.WriteString("}\n\n")
+		}
 	}
 	return nil
 }

@@ -843,3 +843,141 @@ func TestGenerate_remoteRefUnknownFailsWithInherited(t *testing.T) {
 		t.Errorf("error should mention undeclared alias, got: %v", err)
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Root-level output block generation
+// -----------------------------------------------------------------------------
+
+func localModuleCfg(t *testing.T, modulesDir string) *config.Config {
+	t.Helper()
+	return &config.Config{
+		ModulesPath: modulesDir,
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Root:        testCfg.Root,
+	}
+}
+
+func writeOutputsTF(t *testing.T, modulesDir, source, content string) {
+	t.Helper()
+	dir := filepath.Join(modulesDir, source)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "outputs.tf"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGenerate_rootOutputsEmittedForLocalModule(t *testing.T) {
+	modulesDir := t.TempDir()
+	writeOutputsTF(t, modulesDir, "aws/5/vpc", `
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
+output "first_private_subnet_id" {
+  value = aws_subnet.private[0].id
+}
+`)
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		`output "first_private_subnet_id"`,
+		`value = module.vpc.first_private_subnet_id`,
+		`output "vpc_id"`,
+		`value = module.vpc.vpc_id`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
+	}
+}
+
+func TestGenerate_rootOutputsAfterModuleBlocks(t *testing.T) {
+	modulesDir := t.TempDir()
+	writeOutputsTF(t, modulesDir, "aws/5/vpc", `output "vpc_id" { value = aws_vpc.main.id }`)
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	modIdx := strings.Index(out, `module "vpc"`)
+	outIdx := strings.Index(out, `output "vpc_id"`)
+	if modIdx == -1 || outIdx == -1 {
+		t.Fatal("expected both module and output blocks")
+	}
+	if outIdx < modIdx {
+		t.Error("root output blocks must appear after module blocks")
+	}
+}
+
+func TestGenerate_rootOutputsNoOutputsFile(t *testing.T) {
+	// Module dir exists but has no outputs.tf — silently emits nothing.
+	modulesDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(modulesDir, "aws/5/no-outputs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"x"}, map[string]*leaf.Module{"x": {Source: "aws/5/no-outputs"}})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatalf("missing outputs.tf must not be an error: %v", err)
+	}
+	if strings.Contains(out, `output "`) {
+		t.Errorf("expected no output blocks when outputs.tf absent:\n%s", out)
+	}
+}
+
+func TestGenerate_rootOutputsGitSourceSkipped(t *testing.T) {
+	gitCfg := &config.Config{
+		ModulesPath: "github.com/waldman/terraform//modules",
+		ModulesRef:  "v1.0.0",
+		Backend:     config.Backend{"bucket": "my-state", "region": "us-east-1"},
+		Root:        testCfg.Root,
+	}
+	l := makeLeaf([]string{"vpc"}, map[string]*leaf.Module{"vpc": {Source: "aws/5/vpc"}})
+
+	out, err := Generate(gitCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, `output "`) {
+		t.Errorf("git-source module must not emit root output blocks:\n%s", out)
+	}
+}
+
+func TestGenerate_rootOutputsMultiModule(t *testing.T) {
+	modulesDir := t.TempDir()
+	writeOutputsTF(t, modulesDir, "aws/5/vpc", `output "vpc_id" { value = aws_vpc.main.id }`)
+	writeOutputsTF(t, modulesDir, "aws/5/s3-bucket", `output "bucket_arn" { value = aws_s3_bucket.main.arn }`)
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"vpc", "bucket"}, map[string]*leaf.Module{
+		"vpc":    {Source: "aws/5/vpc"},
+		"bucket": {Source: "aws/5/s3-bucket"},
+	})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`output "vpc_id"`,
+		`value = module.vpc.vpc_id`,
+		`output "bucket_arn"`,
+		`value = module.bucket.bucket_arn`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
+	}
+}
