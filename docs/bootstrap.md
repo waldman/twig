@@ -1,22 +1,28 @@
 # Bootstrap
 
-One-time setup of the S3 state bucket and DynamoDB lock table that twig uses
-as its backend. Run this before any `twig plan` or `twig apply`.
+One-time setup of the S3 state bucket that twig uses as its backend. Run
+this before any `twig plan` or `twig apply`.
 
 ## Why a separate Terraform module
 
 The state bucket can't manage its own state — classic chicken-egg. The
 `bootstrap/` module sidesteps this by having no `backend` block: Terraform
-stores its state locally. Two resources, run once, then frozen.
+stores its state locally. One resource, run once, then frozen.
+
+## Locking
+
+Terraform >= 1.10 uses native S3 object locking (`use_lockfile = true`) —
+no DynamoDB table required. The bucket versioning enabled by the bootstrap
+module is a prerequisite for this.
 
 ## Directory layout
 
 ```
 bootstrap/
 ├── versions.tf      # provider config; no backend block
-├── variables.tf     # profile, region, bucket_name, dynamodb_table_name
-├── main.tf          # s3 bucket + versioning + encryption + public-access-block + dynamodb
-├── outputs.tf       # bucket_name, bucket_arn, dynamodb_table_name
+├── variables.tf     # profile, region, bucket_name
+├── main.tf          # s3 bucket + versioning + encryption + public-access-block
+├── outputs.tf       # bucket_name, bucket_arn
 └── .gitignore       # un-ignores terraform.tfstate (safe to commit — no secrets)
 ```
 
@@ -26,7 +32,7 @@ bootstrap/
 
 ```hcl
 terraform {
-  required_version = ">= 1.1"
+  required_version = ">= 1.10"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -56,11 +62,6 @@ variable "region" {
 variable "bucket_name" {
   type     = string
   nullable = false
-}
-
-variable "dynamodb_table_name" {
-  type    = string
-  default = "terraform-locks"
 }
 ```
 
@@ -98,17 +99,6 @@ resource "aws_s3_bucket_public_access_block" "state" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
-
-resource "aws_dynamodb_table" "locks" {
-  name         = var.dynamodb_table_name
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-}
 ```
 
 **`outputs.tf`**
@@ -120,10 +110,6 @@ output "bucket_name" {
 
 output "bucket_arn" {
   value = aws_s3_bucket.state.arn
-}
-
-output "dynamodb_table_name" {
-  value = aws_dynamodb_table.locks.name
 }
 ```
 
@@ -150,10 +136,10 @@ The outputs give you exactly what to paste into `twig.yaml`:
 
 ```yaml
 backend:
-  bucket:         my-terraform-state   # ← bucket_name output
-  region:         us-east-1
-  dynamodb_table: terraform-locks      # ← dynamodb_table_name output
-  profile:        myprofile
+  bucket:       my-terraform-state   # ← bucket_name output
+  region:       us-east-1
+  profile:      myprofile
+  use_lockfile: true
 ```
 
 ## Commit the state file
