@@ -21,11 +21,17 @@ Placed at the directory containing `infra/`. Twig walks up from the leaf file at
 modules_path: ../terraform-modules/modules
 
 backend:
-  bucket: waldman-terraform-state
-  region: us-east-1
+  bucket:  waldman-terraform-state
+  region:  us-east-1
+  profile: myprofile
 ```
 
-Both fields are required. Twig fails at load time if either is missing.
+`bucket` and `region` are required. `profile` is technically optional (twig
+passes it through verbatim to the S3 backend), but in practice required for
+any named-profile setup — omitting it makes Terraform fall back to the default
+credential chain, which silently picks the wrong account in multi-account
+environments. Include it unless you are deliberately relying on env-var or
+instance-profile credentials.
 
 ## `modules_path`
 
