@@ -71,6 +71,7 @@ twig apply infra/aws/waldman/us-east-1/production/services/app.yaml
 
 ## Where to go from here
 
+- [docs/bootstrap.md](docs/bootstrap.md) — one-time state backend setup: S3 bucket + DynamoDB lock table
 - [docs/concepts.md](docs/concepts.md) — the mental model: path-as-data, path variables, reference namespaces, inheritance
 - [docs/project-config.md](docs/project-config.md) — `twig.yaml` reference (backend, local + git modules, `TWIG_MODULES_PATH`)
 - [docs/providers.md](docs/providers.md) — `providers.yaml` (per-cloud, multi-cloud, path-var substitution)
