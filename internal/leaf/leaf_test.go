@@ -78,7 +78,7 @@ func TestLoad_reservedVar(t *testing.T) {
 }
 
 func TestLoad_reservedInstanceKey(t *testing.T) {
-	for _, key := range []string{"module", "remote", "vars"} {
+	for _, key := range []string{"modules", "remotes", "vars"} {
 		t.Run(key, func(t *testing.T) {
 			path := writeLeaf(t, "modules:\n  "+key+":\n    source: aws/5/x\n")
 			_, err := Load(path)
@@ -111,7 +111,7 @@ func TestLoad_fileNotFound(t *testing.T) {
 
 func TestLoad_remoteState_valid(t *testing.T) {
 	path := writeLeaf(t, `
-remote_state:
+remotes:
   vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
   keys: infra/aws/waldman/us-east-1/base/ec2/default-key-pair.yaml
 
@@ -138,7 +138,7 @@ modules:
 
 func TestLoad_remoteState_aliasConflict(t *testing.T) {
 	path := writeLeaf(t, `
-remote_state:
+remotes:
   ec2: infra/aws/waldman/us-east-1/base/vpc/main.yaml
 
 modules:
@@ -283,14 +283,14 @@ func TestLoadInherited_emptyVarsBlock(t *testing.T) {
 func TestLoadInherited_remoteStateInherited(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"),
-		"remote_state:\n  network: infra/aws/myprofile/us-east-1/base/network/main.yaml\n")
+		"remotes:\n  network: infra/aws/myprofile/us-east-1/base/network/main.yaml\n")
 
 	inh, err := LoadInherited(root, seg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := inh.RemoteState["network"]; got != "infra/aws/myprofile/us-east-1/base/network/main.yaml" {
-		t.Errorf("expected inherited remote_state network alias, got %q", got)
+		t.Errorf("expected inherited remotes network alias, got %q", got)
 	}
 	if got := inh.RemoteStateOrigins["network"]; !strings.HasSuffix(got, "us-east-1/vars.yaml") {
 		t.Errorf("expected origin to be the region-level file, got %q", got)
@@ -300,9 +300,9 @@ func TestLoadInherited_remoteStateInherited(t *testing.T) {
 func TestLoadInherited_remoteStateLowerWins(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra"),
-		"remote_state:\n  network: infra/aws/myprofile/us-east-1/base/high/main.yaml\n")
+		"remotes:\n  network: infra/aws/myprofile/us-east-1/base/high/main.yaml\n")
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile", "us-east-1"),
-		"remote_state:\n  network: infra/aws/myprofile/us-east-1/base/low/main.yaml\n")
+		"remotes:\n  network: infra/aws/myprofile/us-east-1/base/low/main.yaml\n")
 
 	inh, err := LoadInherited(root, seg)
 	if err != nil {
@@ -316,11 +316,11 @@ func TestLoadInherited_remoteStateLowerWins(t *testing.T) {
 func TestLoadInherited_remoteStateReservedAliasRejected(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
-		"remote_state:\n  vars: infra/aws/myprofile/us-east-1/base/x/main.yaml\n")
+		"remotes:\n  vars: infra/aws/myprofile/us-east-1/base/x/main.yaml\n")
 
 	_, err := LoadInherited(root, seg)
 	if err == nil {
-		t.Fatal("expected error for reserved alias in inherited remote_state, got nil")
+		t.Fatal("expected error for reserved alias in inherited remotes, got nil")
 	}
 }
 
@@ -393,7 +393,7 @@ func TestLoadInherited_allSectionsCoexist(t *testing.T) {
 	root, seg := makeInfraTree(t)
 	writeVarsYAML(t, filepath.Join(root, "infra", "aws"), `vars:
   vpn_cidr: 10.30.0.0/16
-remote_state:
+remotes:
   network: infra/aws/myprofile/us-east-1/base/network/main.yaml
 module_defaults:
   aws/5/ec2:
@@ -408,7 +408,7 @@ module_defaults:
 		t.Errorf("vars missing: %v", inh.Vars)
 	}
 	if inh.RemoteState["network"] == "" {
-		t.Errorf("remote_state missing: %v", inh.RemoteState)
+		t.Errorf("remotes missing: %v", inh.RemoteState)
 	}
 	if inh.ModuleDefaults["aws/5/ec2"]["ec2_instance_type"] != "t3.small" {
 		t.Errorf("module_defaults missing: %v", inh.ModuleDefaults)

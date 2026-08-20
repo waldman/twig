@@ -124,7 +124,7 @@ func TestGenerate_crossRefPure(t *testing.T) {
 	l := makeLeaf([]string{"bucket", "policy"}, map[string]*leaf.Module{
 		"bucket": {Source: "aws/5/s3-bucket"},
 		"policy": {Source: "aws/5/iam-policy", Vars: map[string]interface{}{
-			"target_arn": "${module.bucket.bucket_arn}",
+			"target_arn": "${modules.bucket.bucket_arn}",
 		}},
 	})
 
@@ -143,7 +143,7 @@ func TestGenerate_crossRefMixed(t *testing.T) {
 	l := makeLeaf([]string{"bucket", "policy"}, map[string]*leaf.Module{
 		"bucket": {Source: "aws/5/s3-bucket"},
 		"policy": {Source: "aws/5/iam-policy", Vars: map[string]interface{}{
-			"wildcard_arn": "${module.bucket.bucket_arn}/*",
+			"wildcard_arn": "${modules.bucket.bucket_arn}/*",
 		}},
 	})
 
@@ -161,7 +161,7 @@ func TestGenerate_crossRefMixed(t *testing.T) {
 func TestGenerate_crossRefUndeclared(t *testing.T) {
 	l := makeLeaf([]string{"policy"}, map[string]*leaf.Module{
 		"policy": {Source: "aws/5/iam-policy", Vars: map[string]interface{}{
-			"arn": "${module.nonexistent.arn}",
+			"arn": "${modules.nonexistent.arn}",
 		}},
 	})
 
@@ -242,9 +242,9 @@ func TestStringToHCL(t *testing.T) {
 		want  string
 	}{
 		{"plain string", `"plain string"`},
-		{"${module.x.arn}", "module.x.arn"},
-		{"${module.x.arn}/*", `"${module.x.arn}/*"`},
-		{"prefix-${module.x.arn}-suffix", `"prefix-${module.x.arn}-suffix"`},
+		{"${modules.x.arn}", "module.x.arn"},
+		{"${modules.x.arn}/*", `"${module.x.arn}/*"`},
+		{"prefix-${modules.x.arn}-suffix", `"prefix-${module.x.arn}-suffix"`},
 		{"${vars.vpn_cidr}", `"10.30.0.0/16"`},
 		{"cidr:${vars.vpn_cidr}/32", `"cidr:10.30.0.0/16/32"`},
 	}
@@ -265,7 +265,7 @@ func TestGenerate_remoteStateBlocks(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.vpc.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -407,7 +407,7 @@ func TestGenerate_remoteStateRef(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.vpc.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -430,7 +430,7 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_tag": "${remote.vpc.name}/ec2"},
+				Vars:   map[string]interface{}{"ec2_tag": "${remotes.vpc.name}/ec2"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -500,7 +500,7 @@ func TestGenerate_varsRefUndeclared(t *testing.T) {
 
 func TestGenerate_inheritedVarsCrossRefRejected(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}})
-	l.Inherited = &leaf.Inherited{Vars: map[string]interface{}{"bad": "${module.ec2.output}"}}
+	l.Inherited = &leaf.Inherited{Vars: map[string]interface{}{"bad": "${modules.ec2.output}"}}
 
 	_, err := Generate(testCfg, testSeg, l)
 	if err == nil {
@@ -517,7 +517,7 @@ func TestGenerate_remoteStateBlocksBeforeModules(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.vpc.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -648,7 +648,7 @@ func TestGenerate_inheritedRemoteStateEmittedWhenReferenced(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
 		"ec2": {
 			Source: "aws/5/ec2",
-			Vars:   map[string]interface{}{"ec2_subnet_id": "${remote.network.first_public_subnet_id}"},
+			Vars:   map[string]interface{}{"ec2_subnet_id": "${remotes.network.first_public_subnet_id}"},
 		},
 	})
 	l.Inherited = &leaf.Inherited{
@@ -694,7 +694,7 @@ func TestGenerate_leafRemoteStateOverridesInherited(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.network.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.network.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"network"},
@@ -730,7 +730,7 @@ func TestGenerate_moduleDefaultsRemoteRefEmitsDataBlock(t *testing.T) {
 			"network": "infra/aws/waldman/us-east-1/base/network/main.yaml",
 		},
 		ModuleDefaults: map[string]map[string]interface{}{
-			"aws/5/ec2": {"ec2_subnet_id": "${remote.network.first_public_subnet_id}"},
+			"aws/5/ec2": {"ec2_subnet_id": "${remotes.network.first_public_subnet_id}"},
 		},
 		ModuleDefaultsOrigins: map[string]map[string]string{
 			"aws/5/ec2": {"ec2_subnet_id": "infra/aws/vars.yaml"},
@@ -808,7 +808,7 @@ func TestGenerate_remoteRefValidatesAgainstInherited(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
 		"ec2": {
 			Source: "aws/5/ec2",
-			Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.network.vpc_id}"},
+			Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.network.vpc_id}"},
 		},
 	})
 	l.Inherited = &leaf.Inherited{
@@ -828,7 +828,7 @@ func TestGenerate_remoteRefUnknownFailsWithInherited(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
 		"ec2": {
 			Source: "aws/5/ec2",
-			Vars:   map[string]interface{}{"ec2_vpc_id": "${remote.nowhere.vpc_id}"},
+			Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.nowhere.vpc_id}"},
 		},
 	})
 	l.Inherited = &leaf.Inherited{

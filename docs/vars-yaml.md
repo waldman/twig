@@ -23,7 +23,7 @@ All optional; any other top-level key is a fatal error.
 vars:
   <name>: <value>
 
-remote_state:
+remotes:
   <alias>: <path-to-leaf.yaml relative to project root>
 
 module_defaults:
@@ -60,22 +60,22 @@ Semantics:
 - Reserved path variable names (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) may not be used as keys inside `vars:`.
 - References (`${...}`) are **not** allowed inside `vars:` values. Values must be literal.
 
-## `remote_state:` — inherited alias-to-leaf-path
+## `remotes:` — inherited alias-to-leaf-path
 
 Aliases declared here extend the effective remote-state map that every leaf below sees, on top of whatever the leaf declares itself.
 
 ```yaml
 # infra/aws/waldman/us-east-1/base/vars.yaml
-remote_state:
+remotes:
   network: infra/aws/waldman/us-east-1/base/network/main.yaml
 ```
 
-A leaf anywhere below `infra/aws/waldman/us-east-1/base/` can then reference `${remote.network.<field>}` without declaring the alias itself.
+A leaf anywhere below `infra/aws/waldman/us-east-1/base/` can then reference `${remotes.network.<field>}` without declaring the alias itself.
 
 Semantics:
 
-- Merges with the leaf's own `remote_state:` — leaf wins per alias on collision.
-- Aliases must not be reserved ref namespaces (`module`, `remote`, `vars`).
+- Merges with the leaf's own `remotes:` — leaf wins per alias on collision.
+- Aliases must not be reserved ref namespaces (`modules`, `remotes`, `vars`).
 - Emission is lazy (see [Lazy emission](#lazy-emission) below).
 
 ## `module_defaults:` — defaults scoped to a module source
@@ -90,7 +90,7 @@ module_defaults:
     vpc_availability_zones: 2
   aws/5/ec2:
     ec2_instance_type: t3.small
-    ec2_subnet_id:     ${remote.network.first_public_subnet_id}
+    ec2_subnet_id:     ${remotes.network.first_public_subnet_id}
 ```
 
 For each module instance in a leaf, twig:
@@ -112,10 +112,10 @@ Values may contain any of the three reference forms — resolved at generate tim
 | Reference | Resolved against |
 |---|---|
 | `${vars.<name>}` | merged inherited `vars:` for this leaf |
-| `${remote.<alias>.<field>}` | merged effective `remote_state:` (inherited + leaf) |
-| `${module.<instance>.<field>}` | modules declared in this leaf |
+| `${remotes.<alias>.<field>}` | merged effective `remotes:` (inherited + leaf) |
+| `${modules.<instance>.<field>}` | modules declared in this leaf |
 
-A `module_defaults` value that references `${module.sg.security_group_id}` requires the consuming leaf to declare an `sg` module. If it does not, validation fails at generate time — for that leaf only.
+A `module_defaults` value that references `${modules.sg.security_group_id}` requires the consuming leaf to declare an `sg` module. If it does not, validation fails at generate time — for that leaf only.
 
 Restrictions:
 
@@ -127,20 +127,20 @@ Restrictions:
 For each file walked in hierarchy order (root of `infra/` → deepest ancestor of the leaf):
 
 - **`vars:`** — per key, closer wins.
-- **`remote_state:`** — per alias, closer wins.
+- **`remotes:`** — per alias, closer wins.
 - **`module_defaults:`** — per source key, then per variable inside. Two `vars.yaml` files setting different variables for the same source contribute both. Same-key collisions: closer wins.
 
 All merges are shallow — a map value at one level is replaced entirely by a map value at a lower level. No deep merge into map contents. If you want to compose two maps, do it explicitly in one place.
 
-The leaf's own `modules.<instance>.vars` and `remote_state:` merge last (after every `vars.yaml`), leaf wins per key or per alias.
+The leaf's own `modules.<instance>.vars` and `remotes:` merge last (after every `vars.yaml`), leaf wins per key or per alias.
 
 ## Lazy emission
 
 A `data "terraform_remote_state" "<alias>"` block appears in the generated `main.tf` **only when the alias is actually referenced** by some resolved module var in that leaf.
 
-Twig walks every module's effective vars (module_defaults + leaf overlay), collects every `${remote.<alias>.<field>}` token, and emits data blocks only for aliases in that set. Emit order is alphabetical.
+Twig walks every module's effective vars (module_defaults + leaf overlay), collects every `${remotes.<alias>.<field>}` token, and emits data blocks only for aliases in that set. Emit order is alphabetical.
 
-Consequence: a shared `vars.yaml` may declare many `remote_state:` aliases without imposing unnecessary state reads on leaves that don't consume them.
+Consequence: a shared `vars.yaml` may declare many `remotes:` aliases without imposing unnecessary state reads on leaves that don't consume them.
 
 ## Provenance
 
@@ -152,7 +152,7 @@ Every argument in a generated module block carries a trailing `# from: <origin>`
 | `leaf: modules.<instance>.vars` | declared directly in the leaf |
 | `<path/to/vars.yaml>: module_defaults."<source>"` | inherited from a `module_defaults` entry in the named file |
 
-Origin tracks where the **key** was declared, not what the value resolves to. A leaf var `ec2_subnet_id: ${remote.network.first_public_subnet_id}` still shows leaf origin — the ref target is orthogonal.
+Origin tracks where the **key** was declared, not what the value resolves to. A leaf var `ec2_subnet_id: ${remotes.network.first_public_subnet_id}` still shows leaf origin — the ref target is orthogonal.
 
 For multi-line values (lists, maps), the provenance comment appears at the end of the closing bracket line:
 
@@ -171,13 +171,13 @@ vars:
   vpn_cidr:          10.30.0.0/16
   internal_dns_zone: internal.example.com
 
-remote_state:
+remotes:
   network: infra/aws/waldman/us-east-1/base/network/main.yaml
 
 module_defaults:
   aws/5/ec2:
     ec2_instance_type: t3.small
-    ec2_subnet_id:     ${remote.network.first_public_subnet_id}
+    ec2_subnet_id:     ${remotes.network.first_public_subnet_id}
 ```
 
 ```yaml

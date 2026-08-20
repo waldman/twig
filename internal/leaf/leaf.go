@@ -21,12 +21,12 @@ var reservedVars = map[string]bool{
 	"module":      true,
 }
 
-// reservedKeys — none may be used as module instance keys or remote_state aliases
+// reservedKeys — none may be used as module instance keys or remotes aliases
 // (they are ref namespaces in the ${ns.key.field} syntax).
 var reservedKeys = map[string]bool{
-	"module": true,
-	"remote": true,
-	"vars":   true,
+	"modules": true,
+	"remotes": true,
+	"vars":    true,
 }
 
 type Module struct {
@@ -48,7 +48,7 @@ type Inherited struct {
 }
 
 // Leaf is the parsed leaf file. Declaration order is preserved for both
-// remote_state aliases and module instance keys.
+// remotes aliases and module instance keys.
 type Leaf struct {
 	Inherited *Inherited // populated by the caller after Load, via LoadInherited
 
@@ -60,7 +60,7 @@ type Leaf struct {
 }
 
 type rawLeaf struct {
-	RemoteState yaml.Node `yaml:"remote_state"`
+	RemoteState yaml.Node `yaml:"remotes"`
 	Modules     yaml.Node `yaml:"modules"`
 }
 
@@ -80,12 +80,12 @@ func Load(leafFile string) (*Leaf, error) {
 		Modules:     make(map[string]*Module),
 	}
 
-	// parse remote_state first — needed for alias conflict check below
+	// parse remotes first — needed for alias conflict check below
 	nodes := raw.RemoteState.Content
 	for i := 0; i+1 < len(nodes); i += 2 {
 		alias := nodes[i].Value
 		if reservedKeys[alias] {
-			return nil, fmt.Errorf("remote_state alias %q is a reserved ref namespace and cannot be used as an alias", alias)
+			return nil, fmt.Errorf("remotes alias %q is a reserved ref namespace and cannot be used as an alias", alias)
 		}
 		path := nodes[i+1].Value
 		l.RemoteStateKeys = append(l.RemoteStateKeys, alias)
@@ -100,7 +100,7 @@ func Load(leafFile string) (*Leaf, error) {
 			return nil, fmt.Errorf("module key %q is a reserved ref namespace and cannot be used as an instance key", key)
 		}
 		if _, conflict := l.RemoteState[key]; conflict {
-			return nil, fmt.Errorf("module key %q conflicts with remote_state alias of the same name", key)
+			return nil, fmt.Errorf("module key %q conflicts with remotes alias of the same name", key)
 		}
 		var mod Module
 		if err := nodes[i+1].Decode(&mod); err != nil {
@@ -124,19 +124,19 @@ func Load(leafFile string) (*Leaf, error) {
 // varsYamlAllowedTopLevel — accepted top-level keys in a vars.yaml file.
 var varsYamlAllowedTopLevel = map[string]bool{
 	"vars":            true,
-	"remote_state":    true,
+	"remotes":         true,
 	"module_defaults": true,
 }
 
 type varsYamlFile struct {
 	Vars           map[string]interface{}            `yaml:"vars"`
-	RemoteState    map[string]string                 `yaml:"remote_state"`
+	RemoteState    map[string]string                 `yaml:"remotes"`
 	ModuleDefaults map[string]map[string]interface{} `yaml:"module_defaults"`
 	Extra          map[string]yaml.Node              `yaml:",inline"`
 }
 
 // LoadInherited walks from infra/ down through each path segment, merging
-// every vars.yaml file's `vars:`, `remote_state:`, and `module_defaults:`
+// every vars.yaml file's `vars:`, `remotes:`, and `module_defaults:`
 // sections. Lower levels (closer to the leaf) override higher ones per key.
 // Missing files are silently skipped. The returned Inherited also carries
 // per-key origin tracking (which vars.yaml supplied each value) for the
@@ -175,7 +175,7 @@ func LoadInherited(root string, seg *pathparse.Segments) (*Inherited, error) {
 		}
 		for k := range file.Extra {
 			if !varsYamlAllowedTopLevel[k] {
-				return nil, fmt.Errorf("%s: unknown top-level key %q (accepted: vars, remote_state, module_defaults)", path, k)
+				return nil, fmt.Errorf("%s: unknown top-level key %q (accepted: vars, remotes, module_defaults)", path, k)
 			}
 		}
 
@@ -188,10 +188,10 @@ func LoadInherited(root string, seg *pathparse.Segments) (*Inherited, error) {
 			inh.VarsOrigins[k] = path
 		}
 
-		// remote_state
+		// remotes
 		for alias, leafPath := range file.RemoteState {
 			if reservedKeys[alias] {
-				return nil, fmt.Errorf("%s: remote_state alias %q is a reserved ref namespace", path, alias)
+				return nil, fmt.Errorf("%s: remotes alias %q is a reserved ref namespace", path, alias)
 			}
 			inh.RemoteState[alias] = leafPath
 			inh.RemoteStateOrigins[alias] = path

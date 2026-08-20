@@ -13,7 +13,7 @@ Where `<component>` becomes the leaf's `component` path variable. Everything abo
 ## Format
 
 ```yaml
-remote_state:                              # optional
+remotes:                                    # optional
   <alias>: <path-to-another-leaf-relative-to-project-root>
 
 modules:                                    # required
@@ -26,7 +26,7 @@ modules:                                    # required
 Rules:
 
 - Instance keys are unique within the file, and become both the Terraform module label (`module "<instance_key>"`) and the value of the `module` path variable injected into that module call.
-- Instance keys and `remote_state` aliases may not be `module`, `remote`, or `vars` (reserved ref namespaces).
+- Instance keys and `remotes` aliases may not be `modules`, `remotes`, or `vars` (reserved ref namespaces).
 - The seven path variables (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) are injected automatically and may not be declared in `vars:`.
 - `vars:` values are strings, numbers, booleans, lists, or maps.
 
@@ -36,38 +36,38 @@ Values in `vars:` can contain references — three namespaces, all requiring the
 
 | Form | Resolves to |
 |---|---|
-| `${module.<instance>.<output>}` | `module.<instance>.<output>` — another module in the same leaf |
-| `${remote.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` — another leaf's state |
+| `${modules.<instance>.<output>}` | `module.<instance>.<output>` — another module in the same leaf |
+| `${remotes.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` — another leaf's state |
 | `${vars.<name>}` | inlined value from the inherited `vars:` map (see [vars-yaml.md](vars-yaml.md)) |
 
 A **pure** reference — the whole value is one `${...}` token — becomes an unquoted HCL expression with the underlying type. An **embedded** reference becomes an interpolated string.
 
 | YAML | Generated HCL |
 |---|---|
-| `${module.x.bucket_arn}` | `module.x.bucket_arn` |
-| `${remote.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
-| `${module.x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` |
+| `${modules.x.bucket_arn}` | `module.x.bucket_arn` |
+| `${remotes.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${modules.x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` |
 | `arn:aws:s3:::my-bucket` | `"arn:aws:s3:::my-bucket"` |
 
 Unqualified `${x.y}` is not a reference — it emits as a literal string. All three namespace prefixes are required.
 
-## `remote_state:` — depend on another leaf
+## `remotes:` — depend on another leaf
 
 Declares outputs consumed from other leaves. Values are read from their S3 state files at plan/apply time — no data copying, no hardcoding.
 
 ```yaml
-remote_state:
+remotes:
   vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
 ```
 
 - Aliases must not conflict with module instance keys.
 - Aliases must not be reserved ref namespaces.
-- The leaf's `remote_state:` merges with the inherited `remote_state:` from the `vars.yaml` hierarchy — leaf wins per alias on collision.
+- The leaf's `remotes:` merges with the inherited `remotes:` from the `vars.yaml` hierarchy — leaf wins per alias on collision.
 - Only aliases actually referenced in resolved module vars produce a `data "terraform_remote_state"` block in the output (lazy emission — see [vars-yaml.md](vars-yaml.md#lazy-emission)).
 
 ## Worked example — intra-leaf refs
 
-Six modules in one component, wired together by `${module.<instance>.<output>}` references:
+Six modules in one component, wired together by `${modules.<instance>.<output>}` references:
 
 ```yaml
 # infra/aws/waldman/us-east-1/production/services/ansible-anchor.yaml
@@ -92,13 +92,13 @@ modules:
   iam_cicd_policy:
     source: aws/5/iam-policy
     vars:
-      iam_policy_user_name: ${module.iam_cicd.user_name}
+      iam_policy_user_name: ${modules.iam_cicd.user_name}
       iam_policy_statements:
         - effect:    Allow
           actions:   [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
           resources:
-            - ${module.s3_bucket.bucket_arn}
-            - ${module.s3_bucket.bucket_arn}/*
+            - ${modules.s3_bucket.bucket_arn}
+            - ${modules.s3_bucket.bucket_arn}/*
 
   iam_infra:
     source: aws/5/iam-user
@@ -106,17 +106,17 @@ modules:
   iam_infra_policy:
     source: aws/5/iam-policy
     vars:
-      iam_policy_user_name: ${module.iam_infra.user_name}
+      iam_policy_user_name: ${modules.iam_infra.user_name}
       iam_policy_statements:
         - effect:    Allow
           actions:   [s3:GetObject, s3:ListBucket]
           resources:
-            - ${module.s3_bucket.bucket_arn}
-            - ${module.s3_bucket.bucket_arn}/*
+            - ${modules.s3_bucket.bucket_arn}
+            - ${modules.s3_bucket.bucket_arn}/*
         - effect:    Allow
           actions:   [dynamodb:PutItem, dynamodb:GetItem, dynamodb:DescribeTable]
           resources:
-            - ${module.dynamodb.table_arn}
+            - ${modules.dynamodb.table_arn}
 ```
 
 `iam_cicd` and `iam_infra` need no `vars:` — the injected `module` path variable (`iam_cicd` / `iam_infra`) already distinguishes them within the component.
@@ -126,15 +126,15 @@ modules:
 ```yaml
 # infra/aws/waldman/us-east-1/dev/ec2/app.yaml
 
-remote_state:
+remotes:
   vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
 
 modules:
   app:
     source: aws/5/ec2
     vars:
-      ec2_vpc_id:    ${remote.vpc.vpc_id}
-      ec2_subnet_id: ${remote.vpc.first_public_subnet_id}
+      ec2_vpc_id:    ${remotes.vpc.vpc_id}
+      ec2_subnet_id: ${remotes.vpc.first_public_subnet_id}
 ```
 
 Generates a `data "terraform_remote_state" "vpc"` block that reads the two outputs from the vpc leaf's state file. No coordination beyond agreeing on output names.
