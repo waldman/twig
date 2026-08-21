@@ -45,6 +45,8 @@ type Inherited struct {
 
 	ModuleDefaults        map[string]map[string]interface{} // source → var → value
 	ModuleDefaultsOrigins map[string]map[string]string      // source → var → source vars.yaml path
+
+	EnvFiles []string // accumulated from all vars.yaml levels, shallowest first
 }
 
 // Leaf is the parsed leaf file. Declaration order is preserved for both
@@ -57,11 +59,14 @@ type Leaf struct {
 
 	ModuleKeys []string
 	Modules    map[string]*Module
+
+	EnvFiles []string // raw paths declared in this leaf file's env_files: key
 }
 
 type rawLeaf struct {
 	RemoteState yaml.Node `yaml:"remotes"`
 	Modules     yaml.Node `yaml:"modules"`
+	EnvFiles    []string  `yaml:"env_files"`
 }
 
 func Load(leafFile string) (*Leaf, error) {
@@ -78,6 +83,7 @@ func Load(leafFile string) (*Leaf, error) {
 	l := &Leaf{
 		RemoteState: make(map[string]string),
 		Modules:     make(map[string]*Module),
+		EnvFiles:    raw.EnvFiles,
 	}
 
 	// parse remotes first — needed for alias conflict check below
@@ -126,12 +132,14 @@ var varsYamlAllowedTopLevel = map[string]bool{
 	"vars":            true,
 	"remotes":         true,
 	"module_defaults": true,
+	"env_files":       true,
 }
 
 type varsYamlFile struct {
 	Vars           map[string]interface{}            `yaml:"vars"`
 	RemoteState    map[string]string                 `yaml:"remotes"`
 	ModuleDefaults map[string]map[string]interface{} `yaml:"module_defaults"`
+	EnvFiles       []string                          `yaml:"env_files"`
 	Extra          map[string]yaml.Node              `yaml:",inline"`
 }
 
@@ -196,6 +204,9 @@ func LoadInherited(root string, seg *pathparse.Segments) (*Inherited, error) {
 			inh.RemoteState[alias] = leafPath
 			inh.RemoteStateOrigins[alias] = path
 		}
+
+		// env_files — concatenate; deeper levels append (later entries override duplicates)
+		inh.EnvFiles = append(inh.EnvFiles, file.EnvFiles...)
 
 		// module_defaults
 		for source, vars := range file.ModuleDefaults {

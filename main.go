@@ -38,6 +38,20 @@ func main() {
 	}
 }
 
+// expandEnvFilePath resolves a raw env_files path: substitutes ${cloud} etc.
+// then expands a leading ~/ to the user's home directory.
+func expandEnvFilePath(raw string, seg *pathparse.Segments) (string, error) {
+	expanded := pathparse.SubstitutePathVars(raw, seg)
+	if strings.HasPrefix(expanded, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("env_files: cannot determine home directory: %w", err)
+		}
+		expanded = filepath.Join(home, expanded[2:])
+	}
+	return expanded, nil
+}
+
 func run(args []string) error {
 	if len(args) < 2 {
 		fmt.Print(usage)
@@ -92,6 +106,21 @@ func run(args []string) error {
 		}
 	}
 
+	// Collect env_files: inherited (shallowest first) then leaf-level.
+	rawPaths := append(l.Inherited.EnvFiles, l.EnvFiles...)
+	resolvedPaths := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		resolved, err := expandEnvFilePath(raw, seg)
+		if err != nil {
+			return err
+		}
+		resolvedPaths = append(resolvedPaths, resolved)
+	}
+	extraEnv, err := runner.LoadEnvFiles(resolvedPaths)
+	if err != nil {
+		return err
+	}
+
 	mainTF, err := generate.Generate(cfg, seg, l)
 	if err != nil {
 		return err
@@ -110,7 +139,7 @@ func run(args []string) error {
 
 	autoInit := func() error {
 		if runner.NeedsInit(cacheDir) {
-			if err := runner.Init(cacheDir); err != nil {
+			if err := runner.Init(cacheDir, extraEnv); err != nil {
 				return fmt.Errorf("auto-init failed: %w", err)
 			}
 		}
@@ -119,17 +148,17 @@ func run(args []string) error {
 
 	switch cmd {
 	case "init":
-		return runner.Terraform(cacheDir, "init", extraArgs)
+		return runner.Terraform(cacheDir, "init", extraArgs, extraEnv)
 	case "plan", "apply", "destroy", "output":
 		if err := autoInit(); err != nil {
 			return err
 		}
-		return runner.Terraform(cacheDir, cmd, extraArgs)
+		return runner.Terraform(cacheDir, cmd, extraArgs, extraEnv)
 	case "state":
 		if err := autoInit(); err != nil {
 			return err
 		}
-		return runner.Terraform(cacheDir, "state", extraArgs)
+		return runner.Terraform(cacheDir, "state", extraArgs, extraEnv)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 	}

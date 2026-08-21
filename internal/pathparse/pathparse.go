@@ -50,6 +50,20 @@ func Parse(root, leafAbs string) (*Segments, error) {
 	}, nil
 }
 
+// SubstitutePathVars replaces ${cloud}, ${profile}, ${region}, ${environment},
+// ${class}, and ${component} in s with the corresponding segment values.
+func SubstitutePathVars(s string, seg *Segments) string {
+	r := strings.NewReplacer(
+		"${cloud}", seg.Cloud,
+		"${profile}", seg.Profile,
+		"${region}", seg.Region,
+		"${environment}", seg.Environment,
+		"${class}", seg.Class,
+		"${component}", seg.Component,
+	)
+	return r.Replace(s)
+}
+
 // StateKey returns the S3 backend key for this leaf.
 func (s *Segments) StateKey() string {
 	return fmt.Sprintf("infra/%s/%s/%s/%s/%s/%s/terraform.tfstate",
