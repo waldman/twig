@@ -10,9 +10,9 @@ modules_path: ../terraform-modules/modules
 modules_ref:  v1.0.0                        # optional, only for git modules_path
 
 backend:
-  bucket:         waldman-terraform-state
-  region:         us-east-1
-  dynamodb_table: waldman-terraform-locks   # optional
+  bucket:       waldman-terraform-state
+  region:       us-east-1
+  use_lockfile: true                        # requires Terraform >= 1.10
 ```
 
 Both `modules_path` and `backend` are required.
@@ -72,3 +72,9 @@ without editing `twig.yaml`.
 Emitted verbatim into the generated `terraform { backend "s3" {} }` block.
 `key` is derived from the leaf path and **must not** appear in `twig.yaml`.
 Any other key/value pair from the map is passed through unchanged.
+
+`use_lockfile: true` is the standard locking mechanism (Terraform >= 1.10,
+native S3 object locking). The deprecated `dynamodb_table` key is silently
+excluded from `data "terraform_remote_state"` config blocks but still
+passed through to the backend block if present. New deployments should use
+`use_lockfile` instead.

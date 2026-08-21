@@ -17,24 +17,27 @@ skipped.
 
 ## Top-level structure
 
-Three top-level sections are recognised. All are optional; any other
+Four top-level sections are recognised. All are optional; any other
 top-level key is rejected.
 
 ```yaml
 vars:
   <variable_name>: <value>
 
-remote_state:
+remotes:
   <alias>: <path-to-leaf.yaml relative to project root>
 
 module_defaults:
   <cloud>/<major>/<module-name>:
     <variable_name>: <value>
+
+env_files:
+  - <path>   # shell-expandable; supports ${cloud}, ${profile}, etc. and ~/
 ```
 
 Merge across the hierarchy is **per-key at the leaf of each section**,
 never a deep merge inside a value. The lowest level (closest to the leaf)
-wins on collision.
+wins on collision — except `env_files:`, which concatenates (see below).
 
 ## `vars:` — reference-resolvable values
 
@@ -67,24 +70,24 @@ modules:
   `environment`, `class`, `component`, `module`) may not be used as keys
   inside the `vars:` block.
 
-## `remote_state:` — inherited remote-state aliases
+## `remotes:` — inherited remote-state aliases
 
 Alias-to-leaf-path mapping merged into the effective remote-state map
-that a leaf sees. A leaf's own `remote_state:` merges last (leaf wins on
+that a leaf sees. A leaf's own `remotes:` merges last (leaf wins on
 alias collision).
 
 ```yaml
 # infra/aws/<profile>/<region>/base/vars.yaml
-remote_state:
+remotes:
   network: infra/aws/<profile>/<region>/base/network/main.yaml
 ```
 
-A leaf below `base/` can then reference `${remote.network.<field>}`
+A leaf below `base/` can then reference `${remotes.network.<field>}`
 without declaring the alias itself. The alias namespace is shared with
-the leaf's own `remote_state:` block — see
-`specs/02_leaf_file.md` for the leaf-level shape.
+the leaf's own `remotes:` block — see `specs/02_leaf_file.md` for the
+leaf-level shape.
 
-- Aliases must not be reserved ref namespaces (`module`, `remote`, `vars`).
+- Aliases must not be reserved ref namespaces (`modules`, `remotes`, `vars`).
 - The `data "terraform_remote_state"` block for an inherited alias is
   emitted only if some resolved module var actually references it (see
   `specs/04_generation.md` — lazy emission).
@@ -102,7 +105,7 @@ module_defaults:
     vpc_availability_zones: 2
   aws/5/ec2:
     ec2_instance_type: t3.small
-    ec2_subnet_id:     ${remote.network.first_public_subnet_id}
+    ec2_subnet_id:     ${remotes.network.first_public_subnet_id}
 ```
 
 ### Matching
@@ -137,10 +140,10 @@ at generate time against the consuming leaf's context:
 | Reference | Resolved against |
 |---|---|
 | `${vars.<name>}` | merged `vars:` for this leaf |
-| `${remote.<alias>.<field>}` | merged `remote_state:` for this leaf (inherited + leaf-declared) |
-| `${module.<instance>.<field>}` | module instances declared in this leaf |
+| `${remotes.<alias>.<field>}` | merged `remotes:` for this leaf (inherited + leaf-declared) |
+| `${modules.<instance>.<field>}` | module instances declared in this leaf |
 
-A `module_defaults` value that references `${module.sg.security_group_id}`
+A `module_defaults` value that references `${modules.sg.security_group_id}`
 requires the consuming leaf to declare an `sg` module. If it does not, the
 reference fails validation at generate time for that leaf.
 
@@ -152,23 +155,91 @@ reference fails validation at generate time for that leaf.
   the reference support described above applies only inside
   `module_defaults.<source>.<var>` values.
 
+## `env_files:` — credential file loader
+
+A list of file paths whose `KEY=value` contents are exported into the
+Terraform subprocess environment before each invocation. The primary use
+case is cloud-provider credential injection for providers that have no
+native credentials-file mechanism equivalent to `~/.aws/credentials`.
+
+```yaml
+# infra/azure/vars.yaml
+env_files:
+  - ~/.azure/profiles/${profile}
+```
+
+### Path expansion
+
+Paths support:
+- `${cloud}`, `${profile}`, `${region}`, `${environment}`, `${class}`,
+  `${component}` — replaced with the leaf's path segment values.
+- Leading `~/` — expanded to the user's home directory.
+
+No other substitution is performed. `env_files` paths are not twig refs
+(`${remotes.*}`, `${modules.*}`, `${vars.*}` are not resolved here).
+
+### File format
+
+Standard shell-sourceable `KEY=value` format:
+
+```
+# comment lines are ignored
+export ARM_CLIENT_ID=abc123          # export prefix is stripped
+ARM_CLIENT_SECRET="my secret"        # double-quoted values are unquoted
+ARM_TENANT_ID='00000000-...'         # single-quoted values are unquoted
+ARM_SUBSCRIPTION_ID=00000000-...     # bare values are taken as-is
+```
+
+Key must match `[A-Za-z_][A-Za-z0-9_]*`. A line without `=` is a hard
+error. A missing file is a hard error.
+
+### Scope
+
+Loaded values are **environment variables only** — they are passed to the
+Terraform subprocess but are not available as `${vars.*}` or any other
+twig reference. They do not appear in the generated `main.tf`.
+
+### Merge semantics
+
+- Lists **concatenate** across inheritance levels — `env_files:` at
+  `infra/azure/vars.yaml` and `env_files:` at the leaf both contribute,
+  shallowest first.
+- Later files in the combined list override earlier ones for duplicate keys.
+- File values override the operator's process environment for the same key
+  (file wins).
+
+### CI/CD pattern
+
+CI writes the credential file to the same path before calling twig.
+The operator experience is identical locally and in CI — no cloud is a
+special case, no per-environment documentation needed.
+
+```
+~/.azure/profiles/my-subscription      ← local credential file (not in repo)
+~/.azure/profiles/my-subscription-prod ← prod credentials (written by CI)
+```
+
 ## Merge order (all sections)
 
 For each file in the hierarchy order — `infra/vars.yaml` → `infra/<cloud>/vars.yaml`
 → ... → `infra/<cloud>/<profile>/<region>/<env>/<class>/vars.yaml`:
 
 - `vars:` — per-variable-name; closer wins.
-- `remote_state:` — per-alias; closer wins.
+- `remotes:` — per-alias; closer wins.
 - `module_defaults:` — per-source, then per-variable-name; closer wins
   on the leaf-most key. Two vars.yaml files setting different variables
   for the same source contribute both.
+- `env_files:` — lists concatenate; shallowest first, deepest appended
+  last. Within the combined list, later files override earlier ones for
+  duplicate keys.
 
 Value replacement is always wholesale. A map value at one level is
 replaced entirely by a map value at a lower level; no deep merge into
 map contents.
 
-The leaf's own `modules.<instance>.vars` and `remote_state:` merge last
-(after all vars.yaml files), leaf wins per-key.
+The leaf's own `modules.<instance>.vars` and `remotes:` merge last
+(after all vars.yaml files), leaf wins per-key. The leaf's own
+`env_files:` is appended last to the combined list.
 
 ## Provenance
 
