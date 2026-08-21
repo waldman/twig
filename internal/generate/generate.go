@@ -105,18 +105,6 @@ func collectProviders(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf)
 	return reqs, nil
 }
 
-func substitutePathVars(s string, seg *pathparse.Segments) string {
-	r := strings.NewReplacer(
-		"${cloud}", seg.Cloud,
-		"${profile}", seg.Profile,
-		"${region}", seg.Region,
-		"${environment}", seg.Environment,
-		"${class}", seg.Class,
-		"${component}", seg.Component,
-	)
-	return r.Replace(s)
-}
-
 func writeProviderBlocks(b *strings.Builder, providers []providerReq, seg *pathparse.Segments) {
 	for _, p := range providers {
 		b.WriteString(fmt.Sprintf("provider %q {\n", p.hclName))
@@ -135,7 +123,7 @@ func writeProviderBlocks(b *strings.Builder, providers []providerReq, seg *pathp
 func providerValToHCL(v interface{}, seg *pathparse.Segments) string {
 	switch val := v.(type) {
 	case string:
-		return fmt.Sprintf("%q", substitutePathVars(val, seg))
+		return fmt.Sprintf("%q", pathparse.SubstitutePathVars(val, seg))
 	case bool:
 		if val {
 			return "true"

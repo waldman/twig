@@ -414,3 +414,58 @@ module_defaults:
 		t.Errorf("module_defaults missing: %v", inh.ModuleDefaults)
 	}
 }
+
+func TestLoad_envFiles(t *testing.T) {
+	path := writeLeaf(t, `
+env_files:
+  - ~/.azure/profiles/myprofile
+  - /etc/twig/extra.env
+modules:
+  web:
+    source: azure/3/app
+`)
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(l.EnvFiles) != 2 {
+		t.Fatalf("want 2 env_files, got %d: %v", len(l.EnvFiles), l.EnvFiles)
+	}
+	if l.EnvFiles[0] != "~/.azure/profiles/myprofile" {
+		t.Errorf("unexpected EnvFiles[0]: %q", l.EnvFiles[0])
+	}
+}
+
+func TestLoad_envFiles_empty(t *testing.T) {
+	path := writeLeaf(t, "modules:\n  web:\n    source: azure/3/app\n")
+	l, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.EnvFiles != nil {
+		t.Errorf("expected nil EnvFiles, got %v", l.EnvFiles)
+	}
+}
+
+func TestLoadInherited_envFilesConcatenated(t *testing.T) {
+	root, seg := makeInfraTree(t)
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
+		"env_files:\n  - ~/.azure/base.env\n")
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws", "myprofile"),
+		"env_files:\n  - ~/.azure/profiles/myprofile\n")
+
+	inh, err := LoadInherited(root, seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inh.EnvFiles) != 2 {
+		t.Fatalf("want 2 env_files, got %d: %v", len(inh.EnvFiles), inh.EnvFiles)
+	}
+	// shallowest first
+	if inh.EnvFiles[0] != "~/.azure/base.env" {
+		t.Errorf("unexpected order: %v", inh.EnvFiles)
+	}
+	if inh.EnvFiles[1] != "~/.azure/profiles/myprofile" {
+		t.Errorf("unexpected order: %v", inh.EnvFiles)
+	}
+}
