@@ -40,30 +40,38 @@ All errors below are fatal — twig exits non-zero without invoking Terraform.
 | Condition | Error |
 |---|---|
 | Reserved path variable (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) used as a key in `vars` | fatal |
-| Reserved ref namespace (`module`, `remote`, `vars`) used as a module instance key | fatal |
-| Reserved ref namespace used as a `remote_state` alias | fatal |
-| `remote_state` alias conflicts with a module instance key in the same leaf | fatal |
-| `remote_state` leaf path does not match the path convention | fatal |
+| Reserved ref namespace (`modules`, `remotes`, `vars`) used as a module instance key | fatal |
+| Reserved ref namespace used as a `remotes` alias | fatal |
+| `remotes` alias conflicts with a module instance key in the same leaf | fatal |
+| `remotes` leaf path does not match the path convention | fatal |
 | Module `source` missing for a declared module instance | fatal |
 
 ### References
 
 Applied against the **effective** context — leaf modules, effective merged
-`remote_state:` (inherited + leaf), and effective merged `vars:` (inherited).
+`remotes:` (inherited + leaf), and effective merged `vars:` (inherited).
 
 | Condition | Error |
 |---|---|
-| `${module.<key>.<field>}` where `<key>` is not a declared module instance in this leaf | fatal |
-| `${remote.<alias>.<field>}` where `<alias>` is not present in the effective merged `remote_state:` for this leaf | fatal |
+| `${modules.<key>.<field>}` where `<key>` is not a declared module instance in this leaf | fatal |
+| `${remotes.<alias>.<field>}` where `<alias>` is not present in the effective merged `remotes:` for this leaf | fatal |
 | `${vars.<name>}` where `<name>` is not present in the effective merged `vars:` for this leaf | fatal |
 
 ### Inherited (vars.yaml)
 
 | Condition | Error |
 |---|---|
-| Unknown top-level key in a `vars.yaml` file (only `vars:`, `remote_state:`, and `module_defaults:` are accepted) | fatal |
+| Unknown top-level key in a `vars.yaml` file (only `vars:`, `remotes:`, `module_defaults:`, and `env_files:` are accepted) | fatal |
 | Reserved path variable used as a key inside a `vars.yaml` file's `vars:` block | fatal |
 | Reserved path variable used as a key inside any `module_defaults.<source>` map | fatal |
-| Reserved ref namespace (`module`, `remote`, `vars`) used as a `remote_state` alias in `vars.yaml` | fatal |
-| Reference (`${module.x.y}`, `${remote.x.y}`, `${vars.x}`) appears inside a `vars:` value in `vars.yaml` (references are permitted only inside `module_defaults.<source>.<var>` values) | fatal |
-| `remote_state` alias in `vars.yaml` maps to a leaf path that does not match the path convention (checked lazily — only when the alias is actually referenced and the data block is emitted) | fatal |
+| Reserved ref namespace (`modules`, `remotes`, `vars`) used as a `remotes` alias in `vars.yaml` | fatal |
+| Reference (`${modules.x.y}`, `${remotes.x.y}`, `${vars.x}`) appears inside a `vars:` value in `vars.yaml` (references are permitted only inside `module_defaults.<source>.<var>` values) | fatal |
+| `remotes` alias in `vars.yaml` maps to a leaf path that does not match the path convention (checked lazily — only when the alias is actually referenced and the data block is emitted) | fatal |
+
+### env_files
+
+| Condition | Error |
+|---|---|
+| A path listed in `env_files:` does not exist on the filesystem | fatal |
+| A line in an env file does not match `[export] KEY=value` format | fatal |
+| A key in an env file does not match `[A-Za-z_][A-Za-z0-9_]*` | fatal |

@@ -4,13 +4,14 @@
 
 Blocks are emitted in this order: `terraform`, `provider` (one per cloud,
 alphabetical), `data "terraform_remote_state"` (referenced aliases only,
-alphabetical), `module` (one per `modules:` entry, declaration order).
+alphabetical), `module` (one per `modules:` entry, declaration order),
+`output` (one per output in each local module's `outputs.tf`, sorted).
 
 ### 1. terraform block
 
 ```hcl
 terraform {
-  required_version = ">= 1.1"
+  required_version = ">= 1.10"
   required_providers {
     # one entry per distinct cloud used by the leaf's modules
     <provider-hcl-name> = {
@@ -46,19 +47,18 @@ provider "<provider-hcl-name>" {
 
 Emitted only for aliases actually referenced in the leaf's resolved module
 vars. The effective remote-state map for a leaf is the merge of the
-`remote_state:` sections in the inherited `vars.yaml` hierarchy overlaid
-with the leaf's own `remote_state:` block (see
-`specs/07_inherited_vars.md` — merge order). Aliases that exist in the
-effective map but are not referenced by any module var produce no data
-block.
+`remotes:` sections in the inherited `vars.yaml` hierarchy overlaid with
+the leaf's own `remotes:` block (see `specs/07_inherited_vars.md` — merge
+order). Aliases that exist in the effective map but are not referenced by
+any module var produce no data block.
 
 Referenced-alias collection: after `module_defaults` injection and leaf
 `vars:` overlay, twig walks every module's resolved var values and
-collects every `${remote.<alias>.<field>}` token. That set is the emit
+collects every `${remotes.<alias>.<field>}` token. That set is the emit
 set.
 
-Aliases in the emit set that are missing from the effective remote_state
-map fail generation with an unresolved-reference error.
+Aliases in the emit set that are missing from the effective remotes map
+fail generation with an unresolved-reference error.
 
 Emit order: alphabetical among referenced aliases.
 
@@ -66,7 +66,7 @@ Emit order: alphabetical among referenced aliases.
 data "terraform_remote_state" "<alias>" {
   backend = "s3"
   config = {
-    # all backend fields from twig.yaml except dynamodb_table, plus derived key:
+    # all backend fields from twig.yaml except dynamodb_table and key, plus derived key:
     bucket  = "<bucket>"
     region  = "<region>"
     key     = "infra/<cloud>/.../<component>/terraform.tfstate"
@@ -103,6 +103,26 @@ module "<instance_key>" {
   <var_from_defaults> = <value>            # from: <path/to/vars.yaml>: module_defaults."<source>"
 }
 ```
+
+### 5. root-level output blocks
+
+For local (non-git) module sources, twig reads each module's `outputs.tf`
+and emits a root-level `output` block for every output declared there.
+These blocks expose the leaf's outputs so that other leaves can consume them
+via `data "terraform_remote_state"`. Without them, a state file has no
+outputs for remote consumers to read.
+
+Emitted after all module blocks, sorted alphabetically per module (in
+module declaration order), then alphabetically within each module's outputs.
+
+```hcl
+output "<output_name>" {
+  value = module.<instance_key>.<output_name>
+}
+```
+
+Git-sourced modules are skipped — their `outputs.tf` is not locally
+readable at generate time.
 
 ## Provenance comments
 

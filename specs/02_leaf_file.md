@@ -26,8 +26,8 @@ modules:
 - `instance_key` must be unique within the file. It becomes both the
   Terraform module label (`module "<instance_key>"`) and the `module`
   variable injected into that module call.
-- `instance_key` must not be one of the reserved ref namespaces (`module`,
-  `remote`, `vars`).
+- `instance_key` must not be one of the reserved ref namespaces (`modules`,
+  `remotes`, `vars`).
 - `source` is resolved against `modules_path` (see
   `specs/01_project_config.md`) — local directory for local `modules_path`,
   git URL for git `modules_path`.
@@ -37,22 +37,22 @@ modules:
 
 ### Remote state references
 
-An optional `remote_state:` block declares outputs consumed from other leaves.
+An optional `remotes:` block declares outputs consumed from other leaves.
 The values are read from their S3 state files at plan/apply time — no data
 copying, no hardcoding.
 
 ```yaml
-remote_state:
+remotes:
   <alias>: <path-to-leaf.yaml relative to project root>
 ```
 
 - Aliases must not conflict with module instance keys.
-- Aliases must not be reserved ref namespaces (`module`, `remote`, `vars`).
+- Aliases must not be reserved ref namespaces (`modules`, `remotes`, `vars`).
 - The same backend config (bucket, region, profile) is used; only the `key`
   changes to point at the target leaf's state file.
-- The leaf's `remote_state:` block merges with the inherited
-  `remote_state:` map from the `vars.yaml` hierarchy (see
-  `specs/07_inherited_vars.md`). On alias-key collisions, the leaf wins.
+- The leaf's `remotes:` block merges with the inherited `remotes:` map from
+  the `vars.yaml` hierarchy (see `specs/07_inherited_vars.md`). On
+  alias-key collisions, the leaf wins.
 - Only aliases actually referenced in the resolved module vars produce
   a `data "terraform_remote_state"` block in the output (lazy emission).
   Declaring an alias here or in a `vars.yaml` and never referencing it
@@ -66,8 +66,8 @@ namespaces exist:
 
 | Form | Resolves to |
 |---|---|
-| `${module.<instance>.<output>}` | `module.<instance>.<output>` (intra-leaf) |
-| `${remote.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` (cross-leaf) |
+| `${modules.<instance>.<output>}` | `module.<instance>.<output>` (intra-leaf) |
+| `${remotes.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` (cross-leaf) |
 | `${vars.<name>}` | value from the merged `vars:` section in the `vars.yaml` hierarchy (see `specs/07_inherited_vars.md`) |
 
 A **pure** reference — the entire value string is one `${...}` token —
@@ -77,10 +77,19 @@ string.
 
 | YAML value | Generated HCL |
 |---|---|
-| `${module.x.bucket_arn}` | `module.x.bucket_arn` |
-| `${remote.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
-| `${module.x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` |
+| `${modules.x.bucket_arn}` | `module.x.bucket_arn` |
+| `${remotes.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${modules.x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` |
 | `arn:aws:s3:::my-bucket` | `"arn:aws:s3:::my-bucket"` |
+
+### Root-level outputs
+
+For local (non-git) module sources, twig reads each module's `outputs.tf`
+and emits a matching root-level `output` block for every output defined
+there. This is what makes `data "terraform_remote_state"` consumers work —
+without root-level output blocks, a state file exposes no outputs. Git
+sources are skipped (their `outputs.tf` is not locally readable at generate
+time; the root output blocks must be added manually or via CI).
 
 ### Example
 
@@ -109,13 +118,13 @@ modules:
   iam_cicd_policy:
     source: aws/5/iam-policy
     vars:
-      iam_policy_user_name: ${module.iam_cicd.user_name}
+      iam_policy_user_name: ${modules.iam_cicd.user_name}
       iam_policy_statements:
         - effect: Allow
           actions: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
           resources:
-            - ${module.s3_bucket.bucket_arn}
-            - ${module.s3_bucket.bucket_arn}/*
+            - ${modules.s3_bucket.bucket_arn}
+            - ${modules.s3_bucket.bucket_arn}/*
 
   iam_infra:
     source: aws/5/iam-user
@@ -123,17 +132,17 @@ modules:
   iam_infra_policy:
     source: aws/5/iam-policy
     vars:
-      iam_policy_user_name: ${module.iam_infra.user_name}
+      iam_policy_user_name: ${modules.iam_infra.user_name}
       iam_policy_statements:
         - effect: Allow
           actions: [s3:GetObject, s3:ListBucket]
           resources:
-            - ${module.s3_bucket.bucket_arn}
-            - ${module.s3_bucket.bucket_arn}/*
+            - ${modules.s3_bucket.bucket_arn}
+            - ${modules.s3_bucket.bucket_arn}/*
         - effect: Allow
           actions: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:DescribeTable]
           resources:
-            - ${module.dynamodb.table_arn}
+            - ${modules.dynamodb.table_arn}
 ```
 
 Note: `iam_cicd` and `iam_infra` require no `vars` — the `module` variable
@@ -146,15 +155,15 @@ infra/aws/waldman/us-east-1/dev/ec2/app.yaml
 ```
 
 ```yaml
-remote_state:
+remotes:
   vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
 
 modules:
   app:
     source: aws/5/ec2
     vars:
-      ec2_vpc_id:    ${remote.vpc.vpc_id}
-      ec2_subnet_id: ${remote.vpc.first_public_subnet_id}
+      ec2_vpc_id:    ${remotes.vpc.vpc_id}
+      ec2_subnet_id: ${remotes.vpc.first_public_subnet_id}
 ```
 
 twig generates a `data "terraform_remote_state" "vpc"` block that reads
