@@ -81,13 +81,30 @@ func collectProviders(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf)
 		majors[cloud] = major
 	}
 
-	if len(majors) == 0 {
-		return nil, nil
-	}
-
 	entries, err := loadProvidersFile(cfg.Root, seg.Cloud)
 	if err != nil {
 		return nil, err
+	}
+
+	// No modules declared — still emit all providers from providers.yaml so
+	// Terraform can plan destruction of existing state resources. Version
+	// constraint is omitted; the lock file governs.
+	if len(majors) == 0 {
+		clouds := make([]string, 0, len(entries))
+		for cloud := range entries {
+			clouds = append(clouds, cloud)
+		}
+		sort.Strings(clouds)
+		var reqs []providerReq
+		for _, cloud := range clouds {
+			entry := entries[cloud]
+			reqs = append(reqs, providerReq{
+				hclName: providerHCLName(entry.Source),
+				source:  entry.Source,
+				config:  entry.Config,
+			})
+		}
+		return reqs, nil
 	}
 
 	clouds := make([]string, 0, len(majors))
@@ -328,7 +345,9 @@ func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.
 		for _, p := range providers {
 			b.WriteString(fmt.Sprintf("    %s = {\n", p.hclName))
 			b.WriteString(fmt.Sprintf("      source  = %q\n", p.source))
-			b.WriteString(fmt.Sprintf("      version = %q\n", p.version))
+			if p.version != "" {
+				b.WriteString(fmt.Sprintf("      version = %q\n", p.version))
+			}
 			b.WriteString("    }\n")
 		}
 		b.WriteString("  }\n")
