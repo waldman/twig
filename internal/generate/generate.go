@@ -463,7 +463,7 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inh *lea
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			hcl, err := toHCL(values[k], resolve, inh.Vars)
+			hcl, err := toHCL(values[k], resolve, inh.Vars, seg)
 			if err != nil {
 				return fmt.Errorf("module %q var %q: %w", key, k, err)
 			}
@@ -475,10 +475,10 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inh *lea
 	return nil
 }
 
-func toHCL(v interface{}, resolve func(string, string, string) string, inherited map[string]interface{}) (string, error) {
+func toHCL(v interface{}, resolve func(string, string, string) string, inherited map[string]interface{}, seg *pathparse.Segments) (string, error) {
 	switch val := v.(type) {
 	case string:
-		return stringToHCL(val, resolve, inherited), nil
+		return stringToHCL(val, resolve, inherited, seg), nil
 	case bool:
 		if val {
 			return "true", nil
@@ -489,9 +489,9 @@ func toHCL(v interface{}, resolve func(string, string, string) string, inherited
 	case float64:
 		return fmt.Sprintf("%g", val), nil
 	case []interface{}:
-		return sliceToHCL(val, resolve, inherited)
+		return sliceToHCL(val, resolve, inherited, seg)
 	case map[string]interface{}:
-		return mapToHCL(val, resolve, inherited)
+		return mapToHCL(val, resolve, inherited, seg)
 	case nil:
 		return "null", nil
 	default:
@@ -499,12 +499,18 @@ func toHCL(v interface{}, resolve func(string, string, string) string, inherited
 	}
 }
 
-func stringToHCL(s string, resolve func(string, string, string) string, inherited map[string]interface{}) string {
+func stringToHCL(s string, resolve func(string, string, string) string, inherited map[string]interface{}, seg *pathparse.Segments) string {
+	// Expand path variables (${cloud}, ${profile}, ${region}, ${environment},
+	// ${class}, ${component}) before ref processing. These come from module_defaults
+	// in vars.yaml and must be resolved to literal values here, not passed to HCL
+	// where Terraform would misinterpret them as resource references.
+	s = pathparse.SubstitutePathVars(s, seg)
+
 	// pure reference: entire string is exactly one ref token
 	if m := refRe.FindStringSubmatch(s); m != nil && m[0] == s {
 		ns, key, field := m[1], m[2], m[3]
 		if ns == "vars" {
-			hcl, err := toHCL(inherited[key], resolve, inherited)
+			hcl, err := toHCL(inherited[key], resolve, inherited, seg)
 			if err != nil {
 				return fmt.Sprintf("%q", fmt.Sprintf("%v", inherited[key]))
 			}
@@ -525,10 +531,10 @@ func stringToHCL(s string, resolve func(string, string, string) string, inherite
 	return fmt.Sprintf("%q", result)
 }
 
-func sliceToHCL(items []interface{}, resolve func(string, string, string) string, inherited map[string]interface{}) (string, error) {
+func sliceToHCL(items []interface{}, resolve func(string, string, string) string, inherited map[string]interface{}, seg *pathparse.Segments) (string, error) {
 	var parts []string
 	for _, item := range items {
-		h, err := toHCL(item, resolve, inherited)
+		h, err := toHCL(item, resolve, inherited, seg)
 		if err != nil {
 			return "", err
 		}
@@ -537,7 +543,7 @@ func sliceToHCL(items []interface{}, resolve func(string, string, string) string
 	return "[\n    " + strings.Join(parts, ",\n    ") + ",\n  ]", nil
 }
 
-func mapToHCL(m map[string]interface{}, resolve func(string, string, string) string, inherited map[string]interface{}) (string, error) {
+func mapToHCL(m map[string]interface{}, resolve func(string, string, string) string, inherited map[string]interface{}, seg *pathparse.Segments) (string, error) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -546,7 +552,7 @@ func mapToHCL(m map[string]interface{}, resolve func(string, string, string) str
 
 	var lines []string
 	for _, k := range keys {
-		h, err := toHCL(m[k], resolve, inherited)
+		h, err := toHCL(m[k], resolve, inherited, seg)
 		if err != nil {
 			return "", err
 		}
