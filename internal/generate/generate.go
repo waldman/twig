@@ -50,6 +50,13 @@ func loadProvidersFile(root, cloud string) (map[string]providerEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("providers.yaml not found for cloud %q (expected at infra/%s/providers.yaml): %w", cloud, cloud, err)
 	}
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if _, ok := raw["env_files"]; ok {
+		return nil, fmt.Errorf("%s: env_files: is not supported here — declare it in infra/%s/vars.yaml instead", path, cloud)
+	}
 	var entries map[string]providerEntry
 	if err := yaml.Unmarshal(data, &entries); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -108,15 +115,30 @@ func collectProviders(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf)
 func writeProviderBlocks(b *strings.Builder, providers []providerReq, seg *pathparse.Segments) {
 	for _, p := range providers {
 		b.WriteString(fmt.Sprintf("provider %q {\n", p.hclName))
-		keys := make([]string, 0, len(p.config))
-		for k := range p.config {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			b.WriteString(fmt.Sprintf("  %s = %s\n", k, providerValToHCL(p.config[k], seg)))
-		}
+		writeProviderConfigEntries(b, p.config, seg, "  ")
 		b.WriteString("}\n\n")
+	}
+}
+
+func writeProviderConfigEntries(b *strings.Builder, cfg map[string]interface{}, seg *pathparse.Segments, indent string) {
+	keys := make([]string, 0, len(cfg))
+	for k := range cfg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := cfg[k]
+		if m, ok := v.(map[string]interface{}); ok {
+			if len(m) == 0 {
+				b.WriteString(fmt.Sprintf("%s%s {}\n", indent, k))
+			} else {
+				b.WriteString(fmt.Sprintf("%s%s {\n", indent, k))
+				writeProviderConfigEntries(b, m, seg, indent+"  ")
+				b.WriteString(fmt.Sprintf("%s}\n", indent))
+			}
+		} else {
+			b.WriteString(fmt.Sprintf("%s%s = %s\n", indent, k, providerValToHCL(v, seg)))
+		}
 	}
 }
 
@@ -136,6 +158,15 @@ func providerValToHCL(v interface{}, seg *pathparse.Segments) string {
 	default:
 		return fmt.Sprintf("%q", fmt.Sprintf("%v", val))
 	}
+}
+
+// backendValToHCL renders a backend string value as HCL. Boolean-like values
+// ("true"/"false") are emitted as unquoted literals; everything else is quoted.
+func backendValToHCL(v string) string {
+	if v == "true" || v == "false" {
+		return v
+	}
+	return fmt.Sprintf("%q", v)
 }
 
 // emptyInherited is used when a Leaf has no Inherited populated (e.g. in tests).
@@ -311,7 +342,7 @@ func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		b.WriteString(fmt.Sprintf("    %-16s= %q\n", k, cfg.Backend[k]))
+		b.WriteString(fmt.Sprintf("    %-16s= %s\n", k, backendValToHCL(cfg.Backend[k])))
 	}
 	b.WriteString(fmt.Sprintf("    %-16s= %q\n", "key", seg.StateKey()))
 	b.WriteString("  }\n")

@@ -34,6 +34,7 @@ All errors below are fatal — twig exits non-zero without invoking Terraform.
 |---|---|
 | `infra/<cloud>/providers.yaml` missing for a cloud used by the leaf | fatal |
 | `providers.yaml` present but missing an entry for a cloud used by the leaf | fatal |
+| `env_files:` key present in `providers.yaml` (use `vars.yaml` at the same level) | fatal |
 
 ### Leaf syntax
 

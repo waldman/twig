@@ -27,10 +27,13 @@ for that cloud. twig reads it during generation and emits the corresponding
 - `source` is a Terraform registry source (`hashicorp/aws`,
   `datadog/datadog`, etc.). The HCL provider name is derived from the last
   segment of the source (`hashicorp/aws` → `aws`).
-- `config` values may be strings, numbers, or booleans. String values may
-  reference path variables via `${cloud}`, `${profile}`, `${region}`,
+- `config` values may be strings, numbers, booleans, or maps. String values
+  may reference path variables via `${cloud}`, `${profile}`, `${region}`,
   `${environment}`, `${class}`, `${component}` and are substituted at
-  generation time.
+  generation time. Map values are rendered as nested HCL blocks (e.g.
+  `features: {}` becomes `features {}`). Nesting is recursive.
+- `env_files:` is **not** valid in `providers.yaml` — use `vars.yaml` at the
+  same level instead. twig will error if `env_files:` is present.
 
 ### Multi-cloud
 
