@@ -247,10 +247,13 @@ func TestStringToHCL(t *testing.T) {
 		{"prefix-${modules.x.arn}-suffix", `"prefix-${module.x.arn}-suffix"`},
 		{"${vars.vpn_cidr}", `"10.30.0.0/16"`},
 		{"cidr:${vars.vpn_cidr}/32", `"cidr:10.30.0.0/16/32"`},
+		// path variables from module_defaults must expand to literal values
+		{"${class}", `"services"`},
+		{"rg-${class}", `"rg-services"`},
 	}
 
 	for _, tc := range cases {
-		got := stringToHCL(tc.input, resolve, inherited)
+		got := stringToHCL(tc.input, resolve, inherited, testSeg)
 		if got != tc.want {
 			t.Errorf("stringToHCL(%q) = %q, want %q", tc.input, got, tc.want)
 		}
