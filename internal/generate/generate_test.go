@@ -984,3 +984,27 @@ func TestGenerate_rootOutputsMultiModule(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerate_emptyLeafEmitsProviders(t *testing.T) {
+	// A leaf with no modules (all commented out) must still emit provider and
+	// required_providers blocks so Terraform can plan destruction of state resources.
+	// Version constraint is omitted; the lock file governs.
+	l := makeLeaf([]string{}, map[string]*leaf.Module{})
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`required_providers`,
+		`aws = {`,
+		`source  = "hashicorp/aws"`,
+		`provider "aws"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("empty-leaf output missing %q\ngot:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `version = "~>`) {
+		t.Errorf("empty-leaf provider must not emit version constraint\ngot:\n%s", out)
+	}
+}
