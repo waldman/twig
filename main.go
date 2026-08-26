@@ -138,8 +138,9 @@ func run(args []string) error {
 	}
 
 	autoInit := func() error {
-		if runner.NeedsInit(cacheDir) {
-			if err := runner.Init(cacheDir, extraEnv); err != nil {
+		needsInit, upgrade := runner.NeedsInit(cacheDir)
+		if needsInit {
+			if err := runner.Init(cacheDir, upgrade, extraEnv); err != nil {
 				return fmt.Errorf("auto-init failed: %w", err)
 			}
 			if err := runner.RecordInitHash(cacheDir); err != nil {

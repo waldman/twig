@@ -129,8 +129,12 @@ func TestMergeEnv_fileWins(t *testing.T) {
 func TestNeedsInit_noTerraformDir(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# content"), 0644)
-	if !NeedsInit(dir) {
-		t.Fatal("expected NeedsInit=true when .terraform/ absent")
+	needsInit, upgrade := NeedsInit(dir)
+	if !needsInit {
+		t.Fatal("expected needsInit=true when .terraform/ absent")
+	}
+	if upgrade {
+		t.Fatal("expected upgrade=false on fresh init")
 	}
 }
 
@@ -141,8 +145,9 @@ func TestNeedsInit_hashMatch(t *testing.T) {
 	if err := RecordInitHash(dir); err != nil {
 		t.Fatal(err)
 	}
-	if NeedsInit(dir) {
-		t.Fatal("expected NeedsInit=false when hash matches")
+	needsInit, _ := NeedsInit(dir)
+	if needsInit {
+		t.Fatal("expected needsInit=false when hash matches")
 	}
 }
 
@@ -154,8 +159,12 @@ func TestNeedsInit_hashMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# new content"), 0644)
-	if !NeedsInit(dir) {
-		t.Fatal("expected NeedsInit=true when main.tf changed")
+	needsInit, upgrade := NeedsInit(dir)
+	if !needsInit {
+		t.Fatal("expected needsInit=true when main.tf changed")
+	}
+	if !upgrade {
+		t.Fatal("expected upgrade=true when main.tf changed with existing .terraform/")
 	}
 }
 
