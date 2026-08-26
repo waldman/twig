@@ -985,6 +985,45 @@ func TestGenerate_rootOutputsMultiModule(t *testing.T) {
 	}
 }
 
+func TestGenerate_rootOutputsSensitivePropagated(t *testing.T) {
+	modulesDir := t.TempDir()
+	writeOutputsTF(t, modulesDir, "aws/5/vm", `
+output "public_ip" {
+  value = aws_instance.main.public_ip
+}
+output "admin_password" {
+  value     = random_password.admin.result
+  sensitive = true
+}
+`)
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"vm"}, map[string]*leaf.Module{"vm": {Source: "aws/5/vm"}})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, `output "public_ip"`) && strings.Contains(out, `sensitive = true`) {
+		// sensitive must only appear on the admin_password block, not public_ip
+		// (checked below via substring proximity — this path would be ambiguous)
+	}
+	if !strings.Contains(out, "output \"admin_password\"") {
+		t.Fatalf("missing admin_password output block:\n%s", out)
+	}
+	// admin_password block must carry sensitive = true
+	idx := strings.Index(out, `output "admin_password"`)
+	block := out[idx : idx+strings.Index(out[idx:], "\n}\n")+3]
+	if !strings.Contains(block, "sensitive = true") {
+		t.Errorf("admin_password output must carry sensitive = true:\n%s", block)
+	}
+	// public_ip block must NOT carry sensitive = true
+	idx2 := strings.Index(out, `output "public_ip"`)
+	block2 := out[idx2 : idx2+strings.Index(out[idx2:], "\n}\n")+3]
+	if strings.Contains(block2, "sensitive = true") {
+		t.Errorf("public_ip output must not carry sensitive = true:\n%s", block2)
+	}
+}
+
 func TestGenerate_emptyLeafEmitsProviders(t *testing.T) {
 	// A leaf with no modules (all commented out) must still emit provider and
 	// required_providers blocks so Terraform can plan destruction of state resources.

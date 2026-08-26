@@ -21,8 +21,16 @@ import (
 //   ${vars.vpn_cidr}       → ns=vars,    key=vpn_cidr,  field=""
 var refRe = regexp.MustCompile(`\$\{(modules|remotes|vars)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
 
-// outputNameRe extracts output block names from HCL files.
-var outputNameRe = regexp.MustCompile(`(?m)^output\s+"([^"]+)"`)
+// outputBlockRe captures the name and body of each output block.
+var outputBlockRe = regexp.MustCompile(`(?ms)^output\s+"([^"]+)"\s*\{([^}]*)\}`)
+
+// sensitiveRe detects sensitive = true within an output block body.
+var sensitiveRe = regexp.MustCompile(`\bsensitive\s*=\s*true\b`)
+
+type outputMeta struct {
+	name      string
+	sensitive bool
+}
 
 type providerEntry struct {
 	Source string                 `yaml:"source"`
@@ -412,9 +420,10 @@ func writeReferencedRemoteStateBlocks(b *strings.Builder, cfg *config.Config, ef
 	return nil
 }
 
-// parseOutputNames reads an outputs.tf file and returns sorted output block names.
-// Returns nil (no error) if the file does not exist.
-func parseOutputNames(path string) ([]string, error) {
+// parseOutputMetas reads an outputs.tf file and returns sorted output metadata,
+// including whether each output is marked sensitive. Returns nil if the file
+// does not exist.
+func parseOutputMetas(path string) ([]outputMeta, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -422,18 +431,23 @@ func parseOutputNames(path string) ([]string, error) {
 		}
 		return nil, err
 	}
-	matches := outputNameRe.FindAllSubmatch(data, -1)
-	names := make([]string, 0, len(matches))
+	matches := outputBlockRe.FindAllSubmatch(data, -1)
+	metas := make([]outputMeta, 0, len(matches))
 	for _, m := range matches {
-		names = append(names, string(m[1]))
+		metas = append(metas, outputMeta{
+			name:      string(m[1]),
+			sensitive: sensitiveRe.Match(m[2]),
+		})
 	}
-	sort.Strings(names)
-	return names, nil
+	sort.Slice(metas, func(i, j int) bool { return metas[i].name < metas[j].name })
+	return metas, nil
 }
 
 // writeRootOutputBlocks emits one root-level output block per output found in
 // each local module's outputs.tf. These blocks are required so that
 // data "terraform_remote_state" consumers can read this leaf's outputs.
+// sensitive = true is propagated so Terraform accepts outputs that reference
+// sensitive module outputs.
 // Git-sourced modules are skipped — their outputs.tf is not locally readable.
 func writeRootOutputBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf) error {
 	if cfg.IsGitSource() {
@@ -442,13 +456,16 @@ func writeRootOutputBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf)
 	for _, key := range l.ModuleKeys {
 		mod := l.Modules[key]
 		outputsPath := filepath.Join(cfg.ModulesRoot(), mod.Source, "outputs.tf")
-		names, err := parseOutputNames(outputsPath)
+		metas, err := parseOutputMetas(outputsPath)
 		if err != nil {
 			return fmt.Errorf("module %q: reading outputs.tf: %w", key, err)
 		}
-		for _, name := range names {
-			b.WriteString(fmt.Sprintf("output %q {\n", name))
-			b.WriteString(fmt.Sprintf("  value = module.%s.%s\n", key, name))
+		for _, meta := range metas {
+			b.WriteString(fmt.Sprintf("output %q {\n", meta.name))
+			b.WriteString(fmt.Sprintf("  value = module.%s.%s\n", key, meta.name))
+			if meta.sensitive {
+				b.WriteString("  sensitive = true\n")
+			}
 			b.WriteString("}\n\n")
 		}
 	}
