@@ -27,10 +27,46 @@ func WriteMain(cacheDir, content string) error {
 	return os.WriteFile(filepath.Join(cacheDir, "main.tf"), []byte(content), 0644)
 }
 
-// NeedsInit reports whether terraform init has not been run in the cache dir.
-func NeedsInit(cacheDir string) bool {
-	_, err := os.Stat(filepath.Join(cacheDir, ".terraform"))
-	return os.IsNotExist(err)
+const initHashFile = ".twig-init-hash"
+
+// NeedsInit reports whether terraform init must be run and whether -upgrade is
+// required. upgrade is true when .terraform/ exists but main.tf changed (the
+// lock file may no longer satisfy the new constraints).
+func NeedsInit(cacheDir string) (needsInit, upgrade bool) {
+	if _, err := os.Stat(filepath.Join(cacheDir, ".terraform")); os.IsNotExist(err) {
+		return true, false
+	}
+	cur, err := mainTFHash(cacheDir)
+	if err != nil {
+		return true, true
+	}
+	stored, err := os.ReadFile(filepath.Join(cacheDir, initHashFile))
+	if err != nil {
+		return true, true
+	}
+	if cur != strings.TrimSpace(string(stored)) {
+		return true, true
+	}
+	return false, false
+}
+
+// RecordInitHash writes the current main.tf hash so NeedsInit can detect
+// future changes.
+func RecordInitHash(cacheDir string) error {
+	h, err := mainTFHash(cacheDir)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(cacheDir, initHashFile), []byte(h), 0644)
+}
+
+func mainTFHash(cacheDir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(cacheDir, "main.tf"))
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -130,7 +166,12 @@ func Terraform(cacheDir string, subcmd string, extraArgs, extraEnv []string) err
 	return cmd.Run()
 }
 
-// Init runs terraform init in cacheDir.
-func Init(cacheDir string, extraEnv []string) error {
-	return Terraform(cacheDir, "init", nil, extraEnv)
+// Init runs terraform init in cacheDir. Pass upgrade=true when the lock file
+// may conflict with changed version constraints.
+func Init(cacheDir string, upgrade bool, extraEnv []string) error {
+	var args []string
+	if upgrade {
+		args = []string{"-upgrade"}
+	}
+	return Terraform(cacheDir, "init", args, extraEnv)
 }
