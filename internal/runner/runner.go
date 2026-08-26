@@ -27,10 +27,42 @@ func WriteMain(cacheDir, content string) error {
 	return os.WriteFile(filepath.Join(cacheDir, "main.tf"), []byte(content), 0644)
 }
 
-// NeedsInit reports whether terraform init has not been run in the cache dir.
+const initHashFile = ".twig-init-hash"
+
+// NeedsInit reports whether terraform init must be run: either .terraform/ is
+// absent, or main.tf changed since the last init (hash mismatch).
 func NeedsInit(cacheDir string) bool {
-	_, err := os.Stat(filepath.Join(cacheDir, ".terraform"))
-	return os.IsNotExist(err)
+	if _, err := os.Stat(filepath.Join(cacheDir, ".terraform")); os.IsNotExist(err) {
+		return true
+	}
+	cur, err := mainTFHash(cacheDir)
+	if err != nil {
+		return true
+	}
+	stored, err := os.ReadFile(filepath.Join(cacheDir, initHashFile))
+	if err != nil {
+		return true
+	}
+	return cur != strings.TrimSpace(string(stored))
+}
+
+// RecordInitHash writes the current main.tf hash so NeedsInit can detect
+// future changes.
+func RecordInitHash(cacheDir string) error {
+	h, err := mainTFHash(cacheDir)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(cacheDir, initHashFile), []byte(h), 0644)
+}
+
+func mainTFHash(cacheDir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(cacheDir, "main.tf"))
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

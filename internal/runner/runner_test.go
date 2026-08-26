@@ -126,6 +126,39 @@ func TestMergeEnv_fileWins(t *testing.T) {
 	}
 }
 
+func TestNeedsInit_noTerraformDir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# content"), 0644)
+	if !NeedsInit(dir) {
+		t.Fatal("expected NeedsInit=true when .terraform/ absent")
+	}
+}
+
+func TestNeedsInit_hashMatch(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".terraform"), 0755)
+	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# content"), 0644)
+	if err := RecordInitHash(dir); err != nil {
+		t.Fatal(err)
+	}
+	if NeedsInit(dir) {
+		t.Fatal("expected NeedsInit=false when hash matches")
+	}
+}
+
+func TestNeedsInit_hashMismatch(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".terraform"), 0755)
+	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# old content"), 0644)
+	if err := RecordInitHash(dir); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("# new content"), 0644)
+	if !NeedsInit(dir) {
+		t.Fatal("expected NeedsInit=true when main.tf changed")
+	}
+}
+
 func splitFirst(kv string) (string, string, bool) {
 	for i, c := range kv {
 		if c == '=' {
