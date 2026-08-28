@@ -167,11 +167,12 @@ func Terraform(cacheDir string, subcmd string, extraArgs, extraEnv []string) err
 }
 
 // Init runs terraform init in cacheDir. Pass upgrade=true when the lock file
-// may conflict with changed version constraints.
+// may conflict with changed version constraints; also passes -reconfigure so
+// backend block changes are accepted without manual intervention.
 func Init(cacheDir string, upgrade bool, extraEnv []string) error {
 	var args []string
 	if upgrade {
-		args = []string{"-upgrade"}
+		args = []string{"-upgrade", "-reconfigure"}
 	}
 	return Terraform(cacheDir, "init", args, extraEnv)
 }
