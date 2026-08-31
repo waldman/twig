@@ -136,23 +136,20 @@ func run(args []string) error {
 	if err := runner.WriteMain(cacheDir, mainTF); err != nil {
 		return err
 	}
+	if err := runner.WriteVersionFile(cacheDir, cfg.Root); err != nil {
+		return err
+	}
 
 	autoInit := func() error {
-		needsInit, upgrade := runner.NeedsInit(cacheDir)
-		if needsInit {
-			if err := runner.Init(cacheDir, upgrade, extraEnv); err != nil {
-				return fmt.Errorf("auto-init failed: %w", err)
-			}
-			if err := runner.RecordInitHash(cacheDir); err != nil {
-				return fmt.Errorf("record init hash: %w", err)
-			}
+		if err := runner.Init(cacheDir, extraEnv); err != nil {
+			return fmt.Errorf("init failed: %w", err)
 		}
 		return nil
 	}
 
 	switch cmd {
 	case "init":
-		return runner.Terraform(cacheDir, "init", extraArgs, extraEnv)
+		return runner.Init(cacheDir, extraEnv)
 	case "plan", "apply", "destroy", "output":
 		if err := autoInit(); err != nil {
 			return err
