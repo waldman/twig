@@ -136,6 +136,9 @@ func run(args []string) error {
 	if err := runner.WriteMain(cacheDir, mainTF); err != nil {
 		return err
 	}
+	if err := runner.WriteVersionFile(cacheDir, cfg.Root); err != nil {
+		return err
+	}
 
 	autoInit := func() error {
 		if err := runner.Init(cacheDir, extraEnv); err != nil {

@@ -27,6 +27,20 @@ func WriteMain(cacheDir, content string) error {
 	return os.WriteFile(filepath.Join(cacheDir, "main.tf"), []byte(content), 0644)
 }
 
+// WriteVersionFile copies .terraform-version from the project root into the
+// cache directory so tfenv resolves the correct Terraform binary. No-op if
+// the file does not exist in the project root.
+func WriteVersionFile(cacheDir, projectRoot string) error {
+	data, err := os.ReadFile(filepath.Join(projectRoot, ".terraform-version"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read .terraform-version: %w", err)
+	}
+	return os.WriteFile(filepath.Join(cacheDir, ".terraform-version"), data, 0644)
+}
+
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // parseEnvFile parses a shell-sourceable KEY=value file. Supports blank lines,
