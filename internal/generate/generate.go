@@ -331,6 +331,38 @@ func effectiveModuleVarsWithOrigins(instanceKey string, mod *leaf.Module, inh *l
 	return values, origins
 }
 
+// validateModuleProviders checks that every module's `providers:` map
+// references a cloud with a primary provider block being emitted and an
+// alias declared in the leaf's `provider_aliases:` section.
+func validateModuleProviders(providers []providerReq, l *leaf.Leaf) error {
+	primaryClouds := make(map[string]bool)
+	for _, p := range providers {
+		if p.alias == "" {
+			primaryClouds[p.hclName] = true
+		}
+	}
+	aliasByCloud := make(map[string]map[string]bool)
+	for cloud, aliases := range l.ProviderAliases {
+		aliasByCloud[cloud] = make(map[string]bool, len(aliases))
+		for _, a := range aliases {
+			aliasByCloud[cloud][aliasName(a.Account, a.Region)] = true
+		}
+	}
+	for _, key := range l.ModuleKeys {
+		mod := l.Modules[key]
+		for lhs, rhs := range mod.Providers {
+			cloud := strings.SplitN(lhs, ".", 2)[0]
+			if !primaryClouds[cloud] {
+				return fmt.Errorf("module %q providers: %q references cloud %q, which has no primary provider block (no module uses %q and it is not declared in providers.yaml usage)", key, lhs, cloud, cloud)
+			}
+			if !aliasByCloud[cloud][rhs] {
+				return fmt.Errorf("module %q providers: %q → %q references undeclared alias %q for cloud %q (declare it in provider_aliases:)", key, lhs, rhs, rhs, cloud)
+			}
+		}
+	}
+	return nil
+}
+
 // collectReferencedRemoteAliases walks the effective vars of every module in
 // the leaf and returns the set of remote_state aliases actually referenced.
 // Only referenced aliases produce data blocks in the generated main.tf.
@@ -372,6 +404,10 @@ func Generate(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf) (string
 
 	providers, err := collectProviders(cfg, seg, l)
 	if err != nil {
+		return "", err
+	}
+
+	if err := validateModuleProviders(providers, l); err != nil {
 		return "", err
 	}
 
@@ -560,7 +596,26 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inh *lea
 	srcPath := cfg.ModuleSource(mod.Source)
 
 	b.WriteString(fmt.Sprintf("module %q {\n", key))
-	b.WriteString(fmt.Sprintf("  source = %q\n\n", srcPath))
+	b.WriteString(fmt.Sprintf("  source = %q\n", srcPath))
+
+	// providers = { ... } — routes leaf-declared aliases into module-side
+	// provider slots. LHS is the module's provider key (e.g. "aws.peer");
+	// RHS is a bare alias name that twig prefixes with the cloud.
+	if len(mod.Providers) > 0 {
+		lhsKeys := make([]string, 0, len(mod.Providers))
+		for k := range mod.Providers {
+			lhsKeys = append(lhsKeys, k)
+		}
+		sort.Strings(lhsKeys)
+		b.WriteString("\n  providers = {\n")
+		for _, lhs := range lhsKeys {
+			rhs := mod.Providers[lhs]
+			cloud := strings.SplitN(lhs, ".", 2)[0]
+			b.WriteString(fmt.Sprintf("    %s = %s.%s\n", lhs, cloud, rhs))
+		}
+		b.WriteString("  }\n")
+	}
+	b.WriteString("\n")
 
 	// Seven path variables, always present, always origin "path".
 	b.WriteString(fmt.Sprintf("  cloud       = %q  # from: path\n", seg.Cloud))

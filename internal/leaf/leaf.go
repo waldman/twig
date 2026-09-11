@@ -32,6 +32,11 @@ var reservedKeys = map[string]bool{
 type Module struct {
 	Source string                 `yaml:"source"`
 	Vars   map[string]interface{} `yaml:"vars"`
+
+	// Providers maps a module-side provider key (e.g. "aws", "aws.peer") to
+	// a leaf-declared alias name (e.g. "waldman_us_west_2"). Emitted as a
+	// providers = { ... } block on the module. Empty map means no override.
+	Providers map[string]string `yaml:"providers"`
 }
 
 // ProviderAlias declares an additional provider block aliased to a specific
