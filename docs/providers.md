@@ -158,6 +158,51 @@ Aliases are opt-in per leaf. Unreferenced alias blocks are lazy in
 Terraform (no API calls until a resource references them), so declaring
 aliases you don't yet consume costs only lines of HCL.
 
+### Routing aliases into modules
+
+Declaring aliases at the leaf level makes provider blocks exist, but does
+not by itself route them into modules. To wire an alias into a specific
+module instance, use `providers:` on the module:
+
+```yaml
+provider_aliases:
+  aws:
+    - {account: waldman, region: us-west-2}
+
+modules:
+  peering:
+    source: aws/5/vpc-peering-cross-region
+    providers:
+      aws.peer: waldman_us_west_2       # module's aws.peer slot ← leaf's alias
+    vars: {...}
+```
+
+Generates:
+
+```hcl
+module "peering" {
+  source = "..."
+
+  providers = {
+    aws.peer = aws.waldman_us_west_2
+  }
+  ...
+}
+```
+
+Rules:
+
+- LHS is the module-side provider key (e.g. `aws`, `aws.peer`) — must
+  match the module's own `configuration_aliases` for aliased slots.
+  Twig does not parse the module's `versions.tf`; mismatches surface
+  at `terraform plan` time.
+- LHS cloud (part before the dot, or the whole string if no dot) must
+  have a primary provider block being emitted.
+- RHS is a bare alias name from `provider_aliases:` — twig prefixes it
+  with the cloud (`aws.<name>`) in the generated HCL.
+- Overriding the module's default provider is done with a bare cloud
+  key: `providers: {aws: <alias>}` renders `providers = {aws = aws.<alias>}`.
+
 ## See also
 
 - [`specs/08_providers.md`](../specs/08_providers.md) — formal reference

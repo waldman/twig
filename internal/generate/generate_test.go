@@ -1154,3 +1154,150 @@ func TestGenerate_providerAliasEmptyMapNoop(t *testing.T) {
 		t.Errorf("empty provider_aliases must not emit alias blocks\ngot:\n%s", out)
 	}
 }
+
+func TestGenerate_moduleProvidersHappyPath(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-west-2")
+
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"peering"},
+		Modules: map[string]*leaf.Module{
+			"peering": {
+				Source: "aws/5/vpc-peering",
+				Providers: map[string]string{
+					"aws.peer": "waldman_us_west_2",
+				},
+			},
+		},
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {{Account: "waldman", Region: "us-west-2"}},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"providers = {\n    aws.peer = aws.waldman_us_west_2\n  }",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
+	}
+}
+
+func TestGenerate_moduleProvidersDefaultOverride(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-west-2")
+
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"registration"},
+		Modules: map[string]*leaf.Module{
+			"registration": {
+				Source: "aws/5/argocd-registration",
+				Providers: map[string]string{
+					"aws": "waldman_us_west_2",
+				},
+			},
+		},
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {{Account: "waldman", Region: "us-west-2"}},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "aws = aws.waldman_us_west_2") {
+		t.Errorf("default provider override missing\ngot:\n%s", out)
+	}
+}
+
+func TestGenerate_moduleProvidersMultipleSorted(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-west-2")
+	mkAcctRegionDir(t, "aws", "marvelx", "us-east-1")
+
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"tgw"},
+		Modules: map[string]*leaf.Module{
+			"tgw": {
+				Source: "aws/5/tgw-peering",
+				Providers: map[string]string{
+					"aws.right": "marvelx_us_east_1",
+					"aws.left":  "waldman_us_west_2",
+				},
+			},
+		},
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {
+				{Account: "waldman", Region: "us-west-2"},
+				{Account: "marvelx", Region: "us-east-1"},
+			},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deterministic: LHS keys sorted alphabetically → aws.left before aws.right.
+	want := "providers = {\n    aws.left = aws.waldman_us_west_2\n    aws.right = aws.marvelx_us_east_1\n  }"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected sorted providers block\nwant:\n%s\ngot:\n%s", want, out)
+	}
+}
+
+func TestGenerate_moduleProvidersUnknownAlias(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"peering"},
+		Modules: map[string]*leaf.Module{
+			"peering": {
+				Source: "aws/5/vpc-peering",
+				Providers: map[string]string{
+					"aws.peer": "nonexistent_alias",
+				},
+			},
+		},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "undeclared alias") {
+		t.Errorf("expected undeclared-alias error, got: %v", err)
+	}
+}
+
+func TestGenerate_moduleProvidersUnknownCloud(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"peering"},
+		Modules: map[string]*leaf.Module{
+			"peering": {
+				Source: "aws/5/vpc-peering",
+				Providers: map[string]string{
+					"azure.peer": "some_alias",
+				},
+			},
+		},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "no primary provider block") {
+		t.Errorf("expected no-primary-provider error, got: %v", err)
+	}
+}
+
+func TestGenerate_moduleProvidersEmptyNoop(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules: map[string]*leaf.Module{
+			"ec2": {
+				Source:    "aws/5/ec2",
+				Providers: map[string]string{},
+			},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "providers = {") {
+		t.Errorf("empty providers must not emit providers block\ngot:\n%s", out)
+	}
+}

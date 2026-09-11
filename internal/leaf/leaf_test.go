@@ -538,6 +538,30 @@ provider_aliases:
 	}
 }
 
+func TestLoad_moduleProvidersMap(t *testing.T) {
+	path := writeLeaf(t, `
+modules:
+  peering:
+    source: aws/5/vpc-peering
+    providers:
+      aws.peer: waldman_us_west_2
+      aws: waldman_us_east_1
+    vars:
+      cidr: 10.0.0.0/16
+`)
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := l.Modules["peering"].Providers
+	if got["aws.peer"] != "waldman_us_west_2" {
+		t.Errorf("aws.peer: got %q, want waldman_us_west_2", got["aws.peer"])
+	}
+	if got["aws"] != "waldman_us_east_1" {
+		t.Errorf("aws: got %q, want waldman_us_east_1", got["aws"])
+	}
+}
+
 func TestLoad_providerAliasesAbsent(t *testing.T) {
 	path := writeLeaf(t, `
 modules:
