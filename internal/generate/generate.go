@@ -41,7 +41,32 @@ type providerReq struct {
 	hclName string
 	source  string
 	version string
+	alias   string // empty for the default provider block
 	config  map[string]interface{}
+}
+
+// hclIdentRe matches valid HCL identifiers used for provider alias names.
+var hclIdentRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// aliasName derives the alias name from (account, region). Dashes become
+// underscores so the result is a valid HCL identifier.
+func aliasName(account, region string) string {
+	r := strings.NewReplacer("-", "_")
+	return r.Replace(account) + "_" + r.Replace(region)
+}
+
+// deepCopyMap returns a deep copy of a config map so callers can mutate keys
+// without affecting the shared providers.yaml template.
+func deepCopyMap(m map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		if nested, ok := v.(map[string]interface{}); ok {
+			out[k] = deepCopyMap(nested)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // providerHCLName derives the HCL provider name from a registry source URL.
@@ -94,16 +119,20 @@ func collectProviders(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf)
 		return nil, err
 	}
 
-	// No modules declared — still emit all providers from providers.yaml so
-	// Terraform can plan destruction of existing state resources. Version
-	// constraint is omitted; the lock file governs.
+	// Build primary reqs. When no modules are declared, emit all providers
+	// from providers.yaml (so Terraform can plan destruction of state
+	// resources) without version constraints. Otherwise emit one primary
+	// block per cloud used by a module, with version constraints derived
+	// from the module source majors.
+	var (
+		clouds []string
+		reqs   []providerReq
+	)
 	if len(majors) == 0 {
-		clouds := make([]string, 0, len(entries))
 		for cloud := range entries {
 			clouds = append(clouds, cloud)
 		}
 		sort.Strings(clouds)
-		var reqs []providerReq
 		for _, cloud := range clouds {
 			entry := entries[cloud]
 			reqs = append(reqs, providerReq{
@@ -112,34 +141,82 @@ func collectProviders(cfg *config.Config, seg *pathparse.Segments, l *leaf.Leaf)
 				config:  entry.Config,
 			})
 		}
-		return reqs, nil
+	} else {
+		for cloud := range majors {
+			clouds = append(clouds, cloud)
+		}
+		sort.Strings(clouds)
+		for _, cloud := range clouds {
+			entry, ok := entries[cloud]
+			if !ok {
+				return nil, fmt.Errorf("module uses cloud %q but %q is not declared in infra/%s/providers.yaml", cloud, cloud, seg.Cloud)
+			}
+			reqs = append(reqs, providerReq{
+				hclName: providerHCLName(entry.Source),
+				source:  entry.Source,
+				version: fmt.Sprintf("~> %s.0", majors[cloud]),
+				config:  entry.Config,
+			})
+		}
 	}
 
-	clouds := make([]string, 0, len(majors))
-	for cloud := range majors {
-		clouds = append(clouds, cloud)
-	}
-	sort.Strings(clouds)
-
-	var reqs []providerReq
-	for _, cloud := range clouds {
+	// Append aliased provider blocks declared in the leaf. Each entry becomes
+	// an additional provider block with the same source but a distinct
+	// (account, region) target. Preserves declaration order.
+	seenAliases := make(map[string]bool) // "<cloud>.<aliasName>" → true
+	for _, cloud := range l.ProviderAliasClouds {
 		entry, ok := entries[cloud]
 		if !ok {
-			return nil, fmt.Errorf("module uses cloud %q but %q is not declared in infra/%s/providers.yaml", cloud, cloud, seg.Cloud)
+			return nil, fmt.Errorf("provider_aliases[%q]: cloud not declared in infra/%s/providers.yaml", cloud, seg.Cloud)
 		}
-		reqs = append(reqs, providerReq{
-			hclName: providerHCLName(entry.Source),
-			source:  entry.Source,
-			version: fmt.Sprintf("~> %s.0", majors[cloud]),
-			config:  entry.Config,
-		})
+		for _, a := range l.ProviderAliases[cloud] {
+			if a.Account == seg.Profile && a.Region == seg.Region {
+				return nil, fmt.Errorf("provider_aliases[%q]: entry {account: %s, region: %s} matches the leaf's default provider; remove it", cloud, a.Account, a.Region)
+			}
+			dir := filepath.Join(cfg.Root, "infra", cloud, a.Account, a.Region)
+			info, err := os.Stat(dir)
+			if err != nil || !info.IsDir() {
+				return nil, fmt.Errorf("provider_aliases[%q]: {account: %s, region: %s}: no such directory %s", cloud, a.Account, a.Region, dir)
+			}
+			name := aliasName(a.Account, a.Region)
+			if !hclIdentRe.MatchString(name) {
+				return nil, fmt.Errorf("provider_aliases[%q]: derived alias name %q is not a valid HCL identifier", cloud, name)
+			}
+			key := cloud + "." + name
+			if seenAliases[key] {
+				return nil, fmt.Errorf("provider_aliases[%q]: duplicate alias name %q", cloud, name)
+			}
+			seenAliases[key] = true
+
+			cfgCopy := deepCopyMap(entry.Config)
+			cfgCopy["profile"] = a.Account
+			cfgCopy["region"] = a.Region
+
+			// Version constraint on the alias mirrors the primary if present;
+			// otherwise omitted (matches the no-modules-declared behavior).
+			version := ""
+			if major, ok := majors[cloud]; ok {
+				version = fmt.Sprintf("~> %s.0", major)
+			}
+			reqs = append(reqs, providerReq{
+				hclName: providerHCLName(entry.Source),
+				source:  entry.Source,
+				version: version,
+				alias:   name,
+				config:  cfgCopy,
+			})
+		}
 	}
+
 	return reqs, nil
 }
 
 func writeProviderBlocks(b *strings.Builder, providers []providerReq, seg *pathparse.Segments) {
 	for _, p := range providers {
 		b.WriteString(fmt.Sprintf("provider %q {\n", p.hclName))
+		if p.alias != "" {
+			b.WriteString(fmt.Sprintf("  alias = %q\n", p.alias))
+		}
 		writeProviderConfigEntries(b, p.config, seg, "  ")
 		b.WriteString("}\n\n")
 	}
@@ -349,8 +426,15 @@ func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.
 	b.WriteString("  required_version = \">= 1.1\"\n")
 
 	if len(providers) > 0 {
+		// required_providers is one row per cloud; alias blocks reuse the
+		// primary row's source and version constraint.
+		seen := make(map[string]bool, len(providers))
 		b.WriteString("  required_providers {\n")
 		for _, p := range providers {
+			if seen[p.hclName] {
+				continue
+			}
+			seen[p.hclName] = true
 			b.WriteString(fmt.Sprintf("    %s = {\n", p.hclName))
 			b.WriteString(fmt.Sprintf("      source  = %q\n", p.source))
 			if p.version != "" {

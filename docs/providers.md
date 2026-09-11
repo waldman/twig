@@ -90,6 +90,74 @@ A leaf that mixes `aws/5/ec2` and `datadog/1/monitor` modules gets both `provide
 
 Note: the file lives at `infra/<cloud>/providers.yaml` where `<cloud>` matches the leaf's first path segment. If a leaf at `infra/aws/...` uses a `datadog/1/monitor` module, twig reads its `providers.yaml` from `infra/aws/providers.yaml` — not from `infra/datadog/`. Declare all providers a given `infra/<cloud>/` subtree needs in that subtree's `providers.yaml`.
 
+## Provider aliases (cross-account / cross-region)
+
+A leaf can declare additional aliased provider blocks — useful for
+cross-region workloads (e.g. a VPN hub peering with spokes across regions
+in the same account) or cross-account modules. Declare them at the leaf
+level with `provider_aliases:`:
+
+```yaml
+# leaf.yaml
+provider_aliases:
+  aws:
+    - {account: waldman, region: us-west-2}
+    - {account: waldman, region: eu-north-1}
+    - {account: marvelx, region: us-east-1}
+
+modules:
+  ...
+```
+
+Both `account` and `region` are required in every entry. The alias name
+is auto-derived as `<account>_<region>` (dashes become underscores).
+Given the example above and a leaf at `infra/aws/waldman/us-east-1/...`,
+twig generates:
+
+```hcl
+provider "aws" {                    # default, from path
+  profile = "waldman"
+  region  = "us-east-1"
+}
+
+provider "aws" {
+  alias   = "waldman_us_west_2"
+  profile = "waldman"
+  region  = "us-west-2"
+}
+
+provider "aws" {
+  alias   = "waldman_eu_north_1"
+  profile = "waldman"
+  region  = "eu-north-1"
+}
+
+provider "aws" {
+  alias   = "marvelx_us_east_1"
+  profile = "marvelx"
+  region  = "us-east-1"
+}
+```
+
+Validation:
+
+- Both `account` and `region` are required non-empty strings.
+- The directory `infra/<cloud>/<account>/<region>/` must exist.
+- An entry equal to the leaf's own `(profile, region)` is rejected —
+  that is the default provider.
+- Duplicate `(account, region)` tuples are rejected.
+- The cloud must be declared in `providers.yaml`.
+
+The alias block reuses the primary provider's `source:` and version
+constraint. Its `config:` inherits from the template, then overrides
+`profile` and `region` with the entry's literal values. Other config
+keys (e.g. `default_tags`) are still substituted using the leaf's
+own path variables.
+
+Aliases are opt-in per leaf. Unreferenced alias blocks are lazy in
+Terraform (no API calls until a resource references them), so declaring
+aliases you don't yet consume costs only lines of HCL.
+
 ## See also
 
 - [`specs/08_providers.md`](../specs/08_providers.md) — formal reference

@@ -469,3 +469,89 @@ func TestLoadInherited_envFilesConcatenated(t *testing.T) {
 		t.Errorf("unexpected order: %v", inh.EnvFiles)
 	}
 }
+
+func TestLoad_providerAliasesValid(t *testing.T) {
+	path := writeLeaf(t, `
+modules:
+  ec2:
+    source: aws/5/ec2
+
+provider_aliases:
+  aws:
+    - {account: marvelx, region: us-west-2}
+    - {account: waldman, region: us-east-1}
+`)
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(l.ProviderAliasClouds) != 1 || l.ProviderAliasClouds[0] != "aws" {
+		t.Fatalf("want ProviderAliasClouds=[aws], got %v", l.ProviderAliasClouds)
+	}
+	got := l.ProviderAliases["aws"]
+	if len(got) != 2 {
+		t.Fatalf("want 2 aliases, got %d", len(got))
+	}
+	// Declaration order preserved.
+	if got[0].Account != "marvelx" || got[0].Region != "us-west-2" {
+		t.Errorf("unexpected first alias: %+v", got[0])
+	}
+	if got[1].Account != "waldman" || got[1].Region != "us-east-1" {
+		t.Errorf("unexpected second alias: %+v", got[1])
+	}
+}
+
+func TestLoad_providerAliasesMissingAccount(t *testing.T) {
+	path := writeLeaf(t, `
+provider_aliases:
+  aws:
+    - {region: us-west-2}
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "both `account` and `region`") {
+		t.Errorf("expected missing-account error, got: %v", err)
+	}
+}
+
+func TestLoad_providerAliasesMissingRegion(t *testing.T) {
+	path := writeLeaf(t, `
+provider_aliases:
+  aws:
+    - {account: marvelx}
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "both `account` and `region`") {
+		t.Errorf("expected missing-region error, got: %v", err)
+	}
+}
+
+func TestLoad_providerAliasesDuplicate(t *testing.T) {
+	path := writeLeaf(t, `
+provider_aliases:
+  aws:
+    - {account: marvelx, region: us-west-2}
+    - {account: marvelx, region: us-west-2}
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "duplicate entry") {
+		t.Errorf("expected duplicate error, got: %v", err)
+	}
+}
+
+func TestLoad_providerAliasesAbsent(t *testing.T) {
+	path := writeLeaf(t, `
+modules:
+  ec2:
+    source: aws/5/ec2
+`)
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(l.ProviderAliasClouds) != 0 {
+		t.Errorf("want no clouds, got %v", l.ProviderAliasClouds)
+	}
+	if l.ProviderAliases == nil {
+		t.Errorf("ProviderAliases map should be initialized (empty), not nil")
+	}
+}
