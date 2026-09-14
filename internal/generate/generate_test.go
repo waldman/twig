@@ -1047,3 +1047,257 @@ func TestGenerate_emptyLeafEmitsProviders(t *testing.T) {
 		t.Errorf("empty-leaf provider must not emit version constraint\ngot:\n%s", out)
 	}
 }
+
+// mkAcctRegionDir creates infra/<cloud>/<account>/<region>/ under testCfg.Root
+// so provider_aliases validation passes.
+func mkAcctRegionDir(t *testing.T, cloud, account, region string) {
+	t.Helper()
+	dir := filepath.Join(testCfg.Root, "infra", cloud, account, region)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGenerate_providerAliasHappyPath(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-west-2")
+	mkAcctRegionDir(t, "aws", "marvelx", "us-east-1")
+
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules:    map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {
+				{Account: "waldman", Region: "us-west-2"},
+				{Account: "marvelx", Region: "us-east-1"},
+			},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Default provider block still present (no alias line).
+	if !strings.Contains(out, "provider \"aws\" {\n  profile = \"waldman\"\n  region = \"us-east-1\"\n}") {
+		t.Errorf("default provider missing or malformed\ngot:\n%s", out)
+	}
+	// Aliased blocks present with correct profile/region overrides.
+	for _, want := range []string{
+		`alias = "waldman_us_west_2"`,
+		`alias = "marvelx_us_east_1"`,
+		"  profile = \"waldman\"\n  region = \"us-west-2\"",
+		"  profile = \"marvelx\"\n  region = \"us-east-1\"",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("alias output missing %q\ngot:\n%s", want, out)
+		}
+	}
+	// required_providers must contain exactly one aws row.
+	if strings.Count(out, "aws = {") != 1 {
+		t.Errorf("required_providers should have exactly one aws row, got:\n%s", out)
+	}
+}
+
+func TestGenerate_providerAliasMissingDir(t *testing.T) {
+	l := &leaf.Leaf{
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {{Account: "nonexistent", Region: "us-west-2"}},
+		},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "no such directory") {
+		t.Errorf("expected missing-directory error, got: %v", err)
+	}
+}
+
+func TestGenerate_providerAliasMatchesDefault(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-east-1")
+
+	l := &leaf.Leaf{
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {{Account: "waldman", Region: "us-east-1"}},
+		},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "matches the leaf's default provider") {
+		t.Errorf("expected matches-default error, got: %v", err)
+	}
+}
+
+func TestGenerate_providerAliasCloudNotDeclared(t *testing.T) {
+	l := &leaf.Leaf{
+		ProviderAliasClouds: []string{"azure"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"azure": {{Account: "marvelx", Region: "us-west-2"}},
+		},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "cloud not declared") {
+		t.Errorf("expected cloud-not-declared error, got: %v", err)
+	}
+}
+
+func TestGenerate_providerAliasEmptyMapNoop(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys:      []string{"ec2"},
+		Modules:         map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
+		ProviderAliases: map[string][]leaf.ProviderAlias{},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "alias =") {
+		t.Errorf("empty provider_aliases must not emit alias blocks\ngot:\n%s", out)
+	}
+}
+
+func TestGenerate_moduleProvidersHappyPath(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-west-2")
+
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"peering"},
+		Modules: map[string]*leaf.Module{
+			"peering": {
+				Source: "aws/5/vpc-peering",
+				Providers: map[string]string{
+					"aws.peer": "waldman_us_west_2",
+				},
+			},
+		},
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {{Account: "waldman", Region: "us-west-2"}},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"providers = {\n    aws.peer = aws.waldman_us_west_2\n  }",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
+	}
+}
+
+func TestGenerate_moduleProvidersDefaultOverride(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-west-2")
+
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"registration"},
+		Modules: map[string]*leaf.Module{
+			"registration": {
+				Source: "aws/5/argocd-registration",
+				Providers: map[string]string{
+					"aws": "waldman_us_west_2",
+				},
+			},
+		},
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {{Account: "waldman", Region: "us-west-2"}},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "aws = aws.waldman_us_west_2") {
+		t.Errorf("default provider override missing\ngot:\n%s", out)
+	}
+}
+
+func TestGenerate_moduleProvidersMultipleSorted(t *testing.T) {
+	mkAcctRegionDir(t, "aws", "waldman", "us-west-2")
+	mkAcctRegionDir(t, "aws", "marvelx", "us-east-1")
+
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"tgw"},
+		Modules: map[string]*leaf.Module{
+			"tgw": {
+				Source: "aws/5/tgw-peering",
+				Providers: map[string]string{
+					"aws.right": "marvelx_us_east_1",
+					"aws.left":  "waldman_us_west_2",
+				},
+			},
+		},
+		ProviderAliasClouds: []string{"aws"},
+		ProviderAliases: map[string][]leaf.ProviderAlias{
+			"aws": {
+				{Account: "waldman", Region: "us-west-2"},
+				{Account: "marvelx", Region: "us-east-1"},
+			},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deterministic: LHS keys sorted alphabetically → aws.left before aws.right.
+	want := "providers = {\n    aws.left = aws.waldman_us_west_2\n    aws.right = aws.marvelx_us_east_1\n  }"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected sorted providers block\nwant:\n%s\ngot:\n%s", want, out)
+	}
+}
+
+func TestGenerate_moduleProvidersUnknownAlias(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"peering"},
+		Modules: map[string]*leaf.Module{
+			"peering": {
+				Source: "aws/5/vpc-peering",
+				Providers: map[string]string{
+					"aws.peer": "nonexistent_alias",
+				},
+			},
+		},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "undeclared alias") {
+		t.Errorf("expected undeclared-alias error, got: %v", err)
+	}
+}
+
+func TestGenerate_moduleProvidersUnknownCloud(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"peering"},
+		Modules: map[string]*leaf.Module{
+			"peering": {
+				Source: "aws/5/vpc-peering",
+				Providers: map[string]string{
+					"azure.peer": "some_alias",
+				},
+			},
+		},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "no primary provider block") {
+		t.Errorf("expected no-primary-provider error, got: %v", err)
+	}
+}
+
+func TestGenerate_moduleProvidersEmptyNoop(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules: map[string]*leaf.Module{
+			"ec2": {
+				Source:    "aws/5/ec2",
+				Providers: map[string]string{},
+			},
+		},
+	}
+	out, err := Generate(testCfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "providers = {") {
+		t.Errorf("empty providers must not emit providers block\ngot:\n%s", out)
+	}
+}
