@@ -32,6 +32,19 @@ var reservedKeys = map[string]bool{
 type Module struct {
 	Source string                 `yaml:"source"`
 	Vars   map[string]interface{} `yaml:"vars"`
+
+	// Providers maps a module-side provider key (e.g. "aws", "aws.peer") to
+	// a leaf-declared alias name (e.g. "waldman_us_west_2"). Emitted as a
+	// providers = { ... } block on the module. Empty map means no override.
+	Providers map[string]string `yaml:"providers"`
+}
+
+// ProviderAlias declares an additional provider block aliased to a specific
+// (account, region) target under the same cloud. Both fields are required.
+// Alias name is auto-derived as "<account>_<region>" (dashes → underscores).
+type ProviderAlias struct {
+	Account string `yaml:"account"`
+	Region  string `yaml:"region"`
 }
 
 // Inherited holds the merged result of every vars.yaml file in the leaf's
@@ -60,13 +73,19 @@ type Leaf struct {
 	ModuleKeys []string
 	Modules    map[string]*Module
 
+	// ProviderAliases maps cloud → ordered list of alias entries. Declaration
+	// order is preserved for deterministic generator output.
+	ProviderAliasClouds []string
+	ProviderAliases     map[string][]ProviderAlias
+
 	EnvFiles []string // raw paths declared in this leaf file's env_files: key
 }
 
 type rawLeaf struct {
-	RemoteState yaml.Node `yaml:"remotes"`
-	Modules     yaml.Node `yaml:"modules"`
-	EnvFiles    []string  `yaml:"env_files"`
+	RemoteState     yaml.Node `yaml:"remotes"`
+	Modules         yaml.Node `yaml:"modules"`
+	ProviderAliases yaml.Node `yaml:"provider_aliases"`
+	EnvFiles        []string  `yaml:"env_files"`
 }
 
 func Load(leafFile string) (*Leaf, error) {
@@ -81,9 +100,10 @@ func Load(leafFile string) (*Leaf, error) {
 	}
 
 	l := &Leaf{
-		RemoteState: make(map[string]string),
-		Modules:     make(map[string]*Module),
-		EnvFiles:    raw.EnvFiles,
+		RemoteState:     make(map[string]string),
+		Modules:         make(map[string]*Module),
+		ProviderAliases: make(map[string][]ProviderAlias),
+		EnvFiles:        raw.EnvFiles,
 	}
 
 	// parse remotes first — needed for alias conflict check below
@@ -122,6 +142,32 @@ func Load(leafFile string) (*Leaf, error) {
 		}
 		l.ModuleKeys = append(l.ModuleKeys, key)
 		l.Modules[key] = &mod
+	}
+
+	// parse provider_aliases: map<cloud, []ProviderAlias>
+	nodes = raw.ProviderAliases.Content
+	for i := 0; i+1 < len(nodes); i += 2 {
+		cloud := nodes[i].Value
+		var aliases []ProviderAlias
+		if err := nodes[i+1].Decode(&aliases); err != nil {
+			return nil, fmt.Errorf("provider_aliases[%q]: %w", cloud, err)
+		}
+		seen := make(map[string]bool, len(aliases))
+		for _, a := range aliases {
+			if a.Account == "" || a.Region == "" {
+				return nil, fmt.Errorf("provider_aliases[%q]: each entry must set both `account` and `region`", cloud)
+			}
+			tuple := a.Account + "/" + a.Region
+			if seen[tuple] {
+				return nil, fmt.Errorf("provider_aliases[%q]: duplicate entry {account: %s, region: %s}", cloud, a.Account, a.Region)
+			}
+			seen[tuple] = true
+		}
+		if len(aliases) == 0 {
+			continue
+		}
+		l.ProviderAliasClouds = append(l.ProviderAliasClouds, cloud)
+		l.ProviderAliases[cloud] = aliases
 	}
 
 	return l, nil
