@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 
@@ -28,6 +29,13 @@ var reservedKeys = map[string]bool{
 	"remotes": true,
 	"vars":    true,
 }
+
+// hclIdentRe matches strings that are valid HCL identifiers. Module instance
+// keys and remotes aliases must satisfy this because they are emitted
+// verbatim into HCL reference expressions (module.<key>.output,
+// data.terraform_remote_state.<alias>.outputs.field). Hyphens are rejected
+// because HCL parses `foo-bar` as a subtraction expression, not a name.
+var hclIdentRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type Module struct {
 	Source string                 `yaml:"source"`
@@ -113,6 +121,9 @@ func Load(leafFile string) (*Leaf, error) {
 		if reservedKeys[alias] {
 			return nil, fmt.Errorf("remotes alias %q is a reserved ref namespace and cannot be used as an alias", alias)
 		}
+		if !hclIdentRe.MatchString(alias) {
+			return nil, fmt.Errorf("remotes alias %q is not a valid HCL identifier (must match [a-zA-Z_][a-zA-Z0-9_]*); rename using underscores", alias)
+		}
 		path := nodes[i+1].Value
 		l.RemoteStateKeys = append(l.RemoteStateKeys, alias)
 		l.RemoteState[alias] = path
@@ -124,6 +135,9 @@ func Load(leafFile string) (*Leaf, error) {
 		key := nodes[i].Value
 		if reservedKeys[key] {
 			return nil, fmt.Errorf("module key %q is a reserved ref namespace and cannot be used as an instance key", key)
+		}
+		if !hclIdentRe.MatchString(key) {
+			return nil, fmt.Errorf("module key %q is not a valid HCL identifier (must match [a-zA-Z_][a-zA-Z0-9_]*); rename using underscores", key)
 		}
 		if _, conflict := l.RemoteState[key]; conflict {
 			return nil, fmt.Errorf("module key %q conflicts with remotes alias of the same name", key)
@@ -246,6 +260,9 @@ func LoadInherited(root string, seg *pathparse.Segments) (*Inherited, error) {
 		for alias, leafPath := range file.RemoteState {
 			if reservedKeys[alias] {
 				return nil, fmt.Errorf("%s: remotes alias %q is a reserved ref namespace", path, alias)
+			}
+			if !hclIdentRe.MatchString(alias) {
+				return nil, fmt.Errorf("%s: remotes alias %q is not a valid HCL identifier (must match [a-zA-Z_][a-zA-Z0-9_]*); rename using underscores", path, alias)
 			}
 			inh.RemoteState[alias] = leafPath
 			inh.RemoteStateOrigins[alias] = path

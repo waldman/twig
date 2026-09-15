@@ -579,3 +579,55 @@ modules:
 		t.Errorf("ProviderAliases map should be initialized (empty), not nil")
 	}
 }
+
+func TestLoad_moduleKeyHyphenRejected(t *testing.T) {
+	path := writeLeaf(t, `
+modules:
+  vpc-1:
+    source: aws/5/vpc
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "not a valid HCL identifier") {
+		t.Errorf("expected hyphen-rejection error, got: %v", err)
+	}
+}
+
+func TestLoad_moduleKeyLeadingDigitRejected(t *testing.T) {
+	path := writeLeaf(t, `
+modules:
+  1vpc:
+    source: aws/5/vpc
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "not a valid HCL identifier") {
+		t.Errorf("expected leading-digit rejection, got: %v", err)
+	}
+}
+
+func TestLoad_remotesAliasHyphenRejected(t *testing.T) {
+	path := writeLeaf(t, `
+remotes:
+  vpc-shared: infra/aws/waldman/us-east-1/base/vpc/shared.yaml
+modules:
+  ec2:
+    source: aws/5/ec2
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "not a valid HCL identifier") {
+		t.Errorf("expected hyphen-rejection error, got: %v", err)
+	}
+}
+
+func TestLoadInherited_remotesAliasHyphenRejected(t *testing.T) {
+	root := t.TempDir()
+	seg := &pathparse.Segments{
+		Cloud: "aws", Profile: "waldman", Region: "us-east-1",
+		Environment: "prod", Class: "base", Component: "app",
+	}
+	writeVarsYAML(t, filepath.Join(root, "infra", "aws"),
+		"remotes:\n  vpc-shared: infra/aws/waldman/us-east-1/base/vpc/shared.yaml\n")
+	_, err := LoadInherited(root, seg)
+	if err == nil || !strings.Contains(err.Error(), "not a valid HCL identifier") {
+		t.Errorf("expected hyphen-rejection error, got: %v", err)
+	}
+}
