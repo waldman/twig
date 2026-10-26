@@ -90,3 +90,74 @@ provider "aws" {
   region  = "us-east-1"
 }
 ```
+
+## Provider aliases
+
+A leaf can declare additional, aliased provider blocks for cross-region or
+cross-account modules, with a top-level `provider_aliases:` key:
+
+```yaml
+provider_aliases:
+  aws:
+    - {account: waldman, region: us-west-2}
+    - {account: shared,  region: us-east-1}
+```
+
+- Each entry is a strict `{account, region}` map; both keys are required.
+- The alias name is derived as `<account>_<region>`, with dashes replaced by
+  underscores: `waldman_us_west_2`, `shared_us_east_1`.
+- `infra/<cloud>/<account>/<region>/` must exist below the project root.
+- An entry equal to the leaf's own `(profile, region)` is rejected, because
+  that is the default provider.
+- `(account, region)` pairs and derived alias names must be unique per cloud.
+- The cloud must be declared in `providers.yaml`.
+
+Each entry renders as one more `provider` block for that cloud, after the
+default blocks and in declaration order. Its config is the cloud's
+`providers.yaml` template with `profile` set to `<account>` and `region` set
+to `<region>`; every other key is substituted with the leaf's own path
+variables. The block shares the cloud's `required_providers` entry.
+
+```hcl
+provider "aws" {
+  alias   = "waldman_us_west_2"
+  profile = "waldman"
+  region  = "us-west-2"
+}
+```
+
+### Routing aliases into modules
+
+An aliased provider block is used only where a module is told to use it.
+`modules.<instance>.providers:` maps a module-side provider key to an alias
+name:
+
+```yaml
+modules:
+  peering:
+    source: aws/5/vpc-peering
+    providers:
+      aws.peer: waldman_us_west_2
+```
+
+renders as
+
+```hcl
+module "peering" {
+  source = "..."
+
+  providers = {
+    aws.peer = aws.waldman_us_west_2
+  }
+  # path variables and vars follow
+}
+```
+
+- The key is the module's provider key: `aws` replaces the module's default
+  provider, and `aws.<name>` fills one of the module's
+  `configuration_aliases`. twig does not read the module's
+  `required_providers`; Terraform reports a mismatch at plan time.
+- The key's cloud (the part before the first dot) must have a default
+  provider block in this leaf.
+- The value must be an alias name declared in `provider_aliases` for that
+  cloud.

@@ -11,14 +11,14 @@ twig <command> <leaf-file> [-- <terraform-flags>...]
 | Command | Behavior |
 |---|---|
 | `twig show <leaf>` | Print the generated `main.tf` to stdout. No Terraform invocation. |
-| `twig init <leaf>` | Generate `main.tf` → `terraform init` in the cache dir. |
-| `twig plan <leaf>` | Generate → auto-init if needed → `terraform plan`. |
-| `twig apply <leaf>` | Generate → auto-init if needed → `terraform apply`. |
-| `twig destroy <leaf>` | Generate → auto-init if needed → `terraform destroy`. |
-| `twig output <leaf>` | Generate → auto-init if needed → `terraform output`. |
-| `twig state <leaf>` | Generate → auto-init if needed → `terraform state <subcmd>`. |
+| `twig init <leaf>` | Generate `main.tf` → `terraform init -reconfigure -upgrade` in the cache dir. |
+| `twig plan <leaf>` | Generate → init → `terraform plan`. |
+| `twig apply <leaf>` | Generate → init → `terraform apply`. |
+| `twig destroy <leaf>` | Generate → init → `terraform destroy`. |
+| `twig output <leaf>` | Generate → init → `terraform output`. |
+| `twig state <leaf>` | Generate → init → `terraform state <subcmd>`. |
 
-**Auto-init.** `plan`, `apply`, `destroy`, `output`, and `state` run `terraform init` automatically the first time (when `.terraform/` is absent from the cache dir).
+**Init.** `plan`, `apply`, `destroy`, `output`, and `state` run `terraform init -reconfigure -upgrade` before the requested command, every time. `-reconfigure` picks up backend changes without a migration prompt; `-upgrade` re-resolves module and provider versions against their constraints. Flags after `--` go to the requested command, not to this init; `twig init` appends them to its own init.
 
 ## Pass-through flags
 
@@ -50,10 +50,11 @@ Generated files and Terraform working state live in a persistent cache directory
 | Path inside | Contents |
 |---|---|
 | `main.tf` | Regenerated on every twig invocation. |
+| `.terraform-version` | Copied from the project root when present, so tfenv picks the project's Terraform version (Terraform runs inside the cache dir). |
 | `.terraform/` | Provider cache, populated by `terraform init`. |
 | `.terraform.lock.hcl` | Provider lock file. |
 
-The cache persists across runs — providers are not re-downloaded on every invocation. Deleting a leaf's cache dir is safe; the next invocation will re-init.
+The cache persists across runs — providers already downloaded are reused, and `init -upgrade` fetches a provider only when a newer release matches the constraints. Deleting a leaf's cache dir is safe; the next invocation re-initialises it.
 
 ## See also
 

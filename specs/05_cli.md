@@ -11,15 +11,22 @@ twig <command> <leaf-file> [-- <terraform-flags>...]
 | Command | Behavior |
 |---|---|
 | `twig show <leaf>` | Print generated `main.tf` to stdout. No Terraform invocation. |
-| `twig init <leaf>` | Generate `main.tf` → `terraform init` in cache dir |
-| `twig plan <leaf>` | Generate `main.tf` → auto-init if needed → `terraform plan` |
-| `twig apply <leaf>` | Generate `main.tf` → auto-init if needed → `terraform apply` |
-| `twig destroy <leaf>` | Generate `main.tf` → auto-init if needed → `terraform destroy` |
-| `twig output <leaf>` | Generate `main.tf` → auto-init if needed → `terraform output` |
-| `twig state <leaf>` | Generate `main.tf` → auto-init if needed → `terraform state <subcmd>` |
+| `twig init <leaf>` | Generate `main.tf` → `terraform init -reconfigure -upgrade` in cache dir |
+| `twig plan <leaf>` | Generate `main.tf` → init → `terraform plan` |
+| `twig apply <leaf>` | Generate `main.tf` → init → `terraform apply` |
+| `twig destroy <leaf>` | Generate `main.tf` → init → `terraform destroy` |
+| `twig output <leaf>` | Generate `main.tf` → init → `terraform output` |
+| `twig state <leaf>` | Generate `main.tf` → init → `terraform state <subcmd>` |
 
-**Auto-init**: `plan`, `apply`, `destroy`, `output`, and `state` run
-`terraform init` automatically if `.terraform/` is absent from the cache dir.
+**Init**: every command except `show` writes `main.tf` and
+`.terraform-version` into the cache dir (see `specs/03_cache.md`). `plan`,
+`apply`, `destroy`, `output`, and `state` then run
+`terraform init -reconfigure -upgrade` before the requested command, on
+every invocation. `-reconfigure` adopts backend-block changes without a
+state-migration prompt; `-upgrade` re-resolves module and provider versions
+against their constraints. Pass-through flags go to the requested command,
+not to this init. `twig init` runs the same init and appends its
+pass-through flags.
 
 **Pass-through flags**: flags after `--` are forwarded verbatim to Terraform.
 

@@ -35,6 +35,14 @@ All errors below are fatal — twig exits non-zero without invoking Terraform.
 | `infra/<cloud>/providers.yaml` missing for a cloud used by the leaf | fatal |
 | `providers.yaml` present but missing an entry for a cloud used by the leaf | fatal |
 | `env_files:` key present in `providers.yaml` (use `vars.yaml` at the same level) | fatal |
+| `provider_aliases` entry missing `account` or `region` | fatal |
+| Duplicate `(account, region)` entry, or duplicate derived alias name, in one cloud's `provider_aliases` list | fatal |
+| `provider_aliases` cloud not declared in `providers.yaml` | fatal |
+| `provider_aliases` entry whose `infra/<cloud>/<account>/<region>/` directory does not exist | fatal |
+| `provider_aliases` entry equal to the leaf's own `(profile, region)`, which is the default provider | fatal |
+| Derived alias name `<account>_<region>` does not match `[a-zA-Z_][a-zA-Z0-9_]*` | fatal |
+| `modules.<instance>.providers` key whose cloud has no default provider block in this leaf | fatal |
+| `modules.<instance>.providers` value that is not an alias declared in `provider_aliases` for that cloud | fatal |
 
 ### Leaf syntax
 
@@ -43,6 +51,8 @@ All errors below are fatal — twig exits non-zero without invoking Terraform.
 | Reserved path variable (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) used as a key in `vars` | fatal |
 | Reserved ref namespace (`modules`, `remotes`, `vars`) used as a module instance key | fatal |
 | Reserved ref namespace used as a `remotes` alias | fatal |
+| Module instance key does not match `[a-zA-Z_][a-zA-Z0-9_]*` | fatal |
+| `remotes` alias does not match `[a-zA-Z_][a-zA-Z0-9_]*` | fatal |
 | `remotes` alias conflicts with a module instance key in the same leaf | fatal |
 | `remotes` leaf path does not match the path convention | fatal |
 | Module `source` missing for a declared module instance | fatal |
@@ -66,6 +76,7 @@ Applied against the **effective** context — leaf modules, effective merged
 | Reserved path variable used as a key inside a `vars.yaml` file's `vars:` block | fatal |
 | Reserved path variable used as a key inside any `module_defaults.<source>` map | fatal |
 | Reserved ref namespace (`modules`, `remotes`, `vars`) used as a `remotes` alias in `vars.yaml` | fatal |
+| `remotes` alias in `vars.yaml` does not match `[a-zA-Z_][a-zA-Z0-9_]*` | fatal |
 | Reference (`${modules.x.y}`, `${remotes.x.y}`, `${vars.x}`) appears inside a `vars:` value in `vars.yaml` (references are permitted only inside `module_defaults.<source>.<var>` values) | fatal |
 | `remotes` alias in `vars.yaml` maps to a leaf path that does not match the path convention (checked lazily — only when the alias is actually referenced and the data block is emitted) | fatal |
 

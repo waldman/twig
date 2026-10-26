@@ -88,6 +88,7 @@ the leaf's own `remotes:` block — see `specs/02_leaf_file.md` for the
 leaf-level shape.
 
 - Aliases must not be reserved ref namespaces (`modules`, `remotes`, `vars`).
+- Aliases must match `[a-zA-Z_][a-zA-Z0-9_]*` (see `specs/02_leaf_file.md`).
 - The `data "terraform_remote_state"` block for an inherited alias is
   emitted only if some resolved module var actually references it (see
   `specs/04_generation.md` — lazy emission).
@@ -134,8 +135,10 @@ For each module instance in the consuming leaf:
 
 ### References inside `module_defaults` values
 
-Values may contain any of the three reference forms. They are resolved
-at generate time against the consuming leaf's context:
+Values may contain the path variables `${cloud}`, `${profile}`,
+`${region}`, `${environment}`, `${class}`, and `${component}`, replaced
+with the consuming leaf's values, and any of the three reference forms,
+resolved at generate time against the consuming leaf's context:
 
 | Reference | Resolved against |
 |---|---|

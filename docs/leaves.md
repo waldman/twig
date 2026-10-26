@@ -16,9 +16,15 @@ Where `<component>` becomes the leaf's `component` path variable. Everything abo
 remotes:                                    # optional
   <alias>: <path-to-another-leaf-relative-to-project-root>
 
+provider_aliases:                           # optional — see providers.md
+  <cloud>:
+    - {account: <account>, region: <region>}
+
 modules:                                    # required
   <instance_key>:
     source: <cloud>/<version>/<module-name>
+    providers:                              # optional — see providers.md
+      <module-provider-key>: <alias-name>
     vars:                                   # optional
       <variable_name>: <value>
 ```
@@ -27,8 +33,10 @@ Rules:
 
 - Instance keys are unique within the file, and become both the Terraform module label (`module "<instance_key>"`) and the value of the `module` path variable injected into that module call.
 - Instance keys and `remotes` aliases may not be `modules`, `remotes`, or `vars` (reserved ref namespaces).
+- Instance keys and `remotes` aliases must match `[a-zA-Z_][a-zA-Z0-9_]*`. Twig's `${...}` references cannot address a key containing a hyphen or any other character, so such keys are rejected.
 - The seven path variables (`cloud`, `profile`, `region`, `environment`, `class`, `component`, `module`) are injected automatically and may not be declared in `vars:`.
 - `vars:` values are strings, numbers, booleans, lists, or maps.
+- String values may contain `${cloud}`, `${profile}`, `${region}`, `${environment}`, `${class}`, and `${component}`, replaced with the leaf's own values.
 
 ## References
 
