@@ -244,7 +244,7 @@ func LoadInherited(root string, seg *pathparse.Segments) (*Inherited, error) {
 		}
 		for k := range file.Extra {
 			if !varsYamlAllowedTopLevel[k] {
-				return nil, fmt.Errorf("%s: unknown top-level key %q (accepted: vars, remotes, module_defaults)", path, k)
+				return nil, fmt.Errorf("%s: unknown top-level key %q (accepted: vars, remotes, module_defaults, env_files)", path, k)
 			}
 		}
 
