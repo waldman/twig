@@ -30,11 +30,12 @@ var reservedKeys = map[string]bool{
 	"vars":    true,
 }
 
-// hclIdentRe matches strings that are valid HCL identifiers. Module instance
-// keys and remotes aliases must satisfy this because they are emitted
-// verbatim into HCL reference expressions (module.<key>.output,
-// data.terraform_remote_state.<alias>.outputs.field). Hyphens are rejected
-// because HCL parses `foo-bar` as a subtraction expression, not a name.
+// hclIdentRe matches the identifier charset of twig's ${...} reference
+// syntax (refRe in internal/generate). Module instance keys and remotes
+// aliases must satisfy it: a key outside it could never be referenced,
+// because refRe would not match the reference and the raw "${...}" text
+// would be emitted as a literal string. HCL itself accepts hyphens in
+// identifiers; twig's references do not.
 var hclIdentRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type Module struct {
