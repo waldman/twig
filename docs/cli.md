@@ -20,6 +20,8 @@ twig <command> <leaf-file> [-- <terraform-flags>...]
 
 **Init.** `plan`, `apply`, `destroy`, `output`, and `state` run `terraform init -reconfigure -upgrade` before the requested command, every time. `-reconfigure` picks up backend changes without a migration prompt; `-upgrade` re-resolves module and provider versions against their constraints. Flags after `--` go to the requested command, not to this init; `twig init` appends them to its own init.
 
+**Outputs.** `twig output` lists one entry per module instance. Instances whose module has a sensitive output — and every git-sourced instance — show as `<sensitive>`; `twig output <leaf> -- <instance>` or `twig output <leaf> -- -json` prints their values.
+
 ## Pass-through flags
 
 Flags after `--` are forwarded verbatim to the underlying Terraform command:

@@ -45,7 +45,7 @@ Values in `vars:` can contain references — three namespaces, all requiring the
 | Form | Resolves to |
 |---|---|
 | `${modules.<instance>.<output>}` | `module.<instance>.<output>` — another module in the same leaf |
-| `${remotes.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` — another leaf's state |
+| `${remotes.<alias>.<instance>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<instance>.<output>` — an output of module `<instance>` in another leaf |
 | `${vars.<name>}` | inlined value from the inherited `vars:` map (see [vars-yaml.md](vars-yaml.md)) |
 
 A **pure** reference — the whole value is one `${...}` token — becomes an unquoted HCL expression with the underlying type. An **embedded** reference becomes an interpolated string.
@@ -53,11 +53,13 @@ A **pure** reference — the whole value is one `${...}` token — becomes an un
 | YAML | Generated HCL |
 |---|---|
 | `${modules.x.bucket_arn}` | `module.x.bucket_arn` |
-| `${remotes.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${remotes.vpc.main.vpc_id}` | `data.terraform_remote_state.vpc.outputs.main.vpc_id` |
 | `${modules.x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` |
 | `arn:aws:s3:::my-bucket` | `"arn:aws:s3:::my-bucket"` |
 
 Unqualified `${x.y}` is not a reference — it emits as a literal string. All three namespace prefixes are required.
+
+Each namespace has exactly one shape — any other number of segments is an error. The flat form `${remotes.<alias>.<output>}` is rejected with an error that shows the namespaced form.
 
 ## `remotes:` — depend on another leaf
 
@@ -127,9 +129,35 @@ modules:
             - ${modules.dynamodb.table_arn}
 ```
 
-`iam_cicd` and `iam_infra` need no `vars:` — the injected `module` path variable (`iam_cicd` / `iam_infra`) already distinguishes them within the component.
+`iam_cicd` and `iam_infra` need no `vars:` — the injected `module` path variable (`iam_cicd` / `iam_infra`) already distinguishes them within the component. Each also gets its own root output, so another leaf can read `${remotes.<alias>.iam_cicd.user_name}`.
+
+## What a leaf exposes to other leaves
+
+Twig emits one root output per module instance, named after the instance key, whose value is the whole module object:
+
+```hcl
+output "main" {
+  value = module.main
+}
+```
+
+Other leaves read it as `${remotes.<alias>.<instance>.<output>}`. Instance keys are unique within a leaf, so two modules of the same source (two `iam-user` instances, say) never collide.
+
+When any output of the module is `sensitive`, the instance's root output is marked `sensitive = true` (Terraform requires it). Git-sourced modules can't be inspected at generate time, so their instances are always marked. Marking only changes the producing leaf's display — `terraform_remote_state` does not carry sensitivity across leaves, so consumers get plain values.
 
 ## Worked example — cross-leaf refs
+
+The vpc leaf declares its VPC module as instance `main`:
+
+```yaml
+# infra/aws/waldman/us-east-1/base/vpc/main.yaml
+
+modules:
+  main:
+    source: aws/5/vpc
+```
+
+The consumer reads that instance's outputs:
 
 ```yaml
 # infra/aws/waldman/us-east-1/dev/ec2/app.yaml
@@ -141,11 +169,11 @@ modules:
   app:
     source: aws/5/ec2
     vars:
-      ec2_vpc_id:    ${remotes.vpc.vpc_id}
-      ec2_subnet_id: ${remotes.vpc.first_public_subnet_id}
+      ec2_vpc_id:    ${remotes.vpc.main.vpc_id}
+      ec2_subnet_id: ${remotes.vpc.main.first_public_subnet_id}
 ```
 
-Generates a `data "terraform_remote_state" "vpc"` block that reads the two outputs from the vpc leaf's state file. No coordination beyond agreeing on output names.
+Generates a `data "terraform_remote_state" "vpc"` block that reads the two outputs from the `main` root output in the vpc leaf's state file. No coordination beyond agreeing on the instance key and output names.
 
 ## See also
 

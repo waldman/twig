@@ -73,7 +73,7 @@ remotes:
   network: infra/aws/waldman/us-east-1/base/network/main.yaml
 ```
 
-A leaf anywhere below `infra/aws/waldman/us-east-1/base/` can then reference `${remotes.network.<field>}` without declaring the alias itself.
+A leaf anywhere below `infra/aws/waldman/us-east-1/base/` can then reference `${remotes.network.<instance>.<output>}` without declaring the alias itself — e.g. `${remotes.network.vpc.first_public_subnet_id}` when the network leaf declares its VPC module as instance `vpc`.
 
 Semantics:
 
@@ -94,7 +94,7 @@ module_defaults:
     vpc_availability_zones: 2
   aws/5/ec2:
     ec2_instance_type: t3.small
-    ec2_subnet_id:     ${remotes.network.first_public_subnet_id}
+    ec2_subnet_id:     ${remotes.network.vpc.first_public_subnet_id}
 ```
 
 For each module instance in a leaf, twig:
@@ -116,7 +116,7 @@ Values may contain the path variables `${cloud}`, `${profile}`, `${region}`, `${
 | Reference | Resolved against |
 |---|---|
 | `${vars.<name>}` | merged inherited `vars:` for this leaf |
-| `${remotes.<alias>.<field>}` | merged effective `remotes:` (inherited + leaf) |
+| `${remotes.<alias>.<instance>.<output>}` | merged effective `remotes:` (inherited + leaf) |
 | `${modules.<instance>.<field>}` | modules declared in this leaf |
 
 A `module_defaults` value that references `${modules.sg.security_group_id}` requires the consuming leaf to declare an `sg` module. If it does not, validation fails at generate time — for that leaf only.
@@ -142,7 +142,7 @@ The leaf's own `modules.<instance>.vars` and `remotes:` merge last (after every 
 
 A `data "terraform_remote_state" "<alias>"` block appears in the generated `main.tf` **only when the alias is actually referenced** by some resolved module var in that leaf.
 
-Twig walks every module's effective vars (module_defaults + leaf overlay), collects every `${remotes.<alias>.<field>}` token, and emits data blocks only for aliases in that set. Emit order is alphabetical.
+Twig walks every module's effective vars (module_defaults + leaf overlay), collects every `${remotes.<alias>.<instance>.<output>}` token, and emits data blocks only for aliases in that set. Emit order is alphabetical.
 
 Consequence: a shared `vars.yaml` may declare many `remotes:` aliases without imposing unnecessary state reads on leaves that don't consume them.
 
@@ -156,7 +156,7 @@ Every argument in a generated module block carries a trailing `# from: <origin>`
 | `leaf: modules.<instance>.vars` | declared directly in the leaf |
 | `<path/to/vars.yaml>: module_defaults."<source>"` | inherited from a `module_defaults` entry in the named file |
 
-Origin tracks where the **key** was declared, not what the value resolves to. A leaf var `ec2_subnet_id: ${remotes.network.first_public_subnet_id}` still shows leaf origin — the ref target is orthogonal.
+Origin tracks where the **key** was declared, not what the value resolves to. A leaf var `ec2_subnet_id: ${remotes.network.vpc.first_public_subnet_id}` still shows leaf origin — the ref target is orthogonal.
 
 For multi-line values (lists, maps), the provenance comment appears at the end of the closing bracket line:
 
@@ -181,7 +181,7 @@ remotes:
 module_defaults:
   aws/5/ec2:
     ec2_instance_type: t3.small
-    ec2_subnet_id:     ${remotes.network.first_public_subnet_id}
+    ec2_subnet_id:     ${remotes.network.vpc.first_public_subnet_id}
 ```
 
 ```yaml
@@ -210,7 +210,7 @@ module "web" {
   # ... path vars with # from: path ...
   ec2_ami           = "ami-abc123"                                                     # from: leaf: modules.web.vars
   ec2_instance_type = "t3.small"                                                       # from: /.../infra/aws/vars.yaml: module_defaults."aws/5/ec2"
-  ec2_subnet_id     = data.terraform_remote_state.network.outputs.first_public_subnet_id  # from: /.../infra/aws/vars.yaml: module_defaults."aws/5/ec2"
+  ec2_subnet_id     = data.terraform_remote_state.network.outputs.vpc.first_public_subnet_id  # from: /.../infra/aws/vars.yaml: module_defaults."aws/5/ec2"
 }
 ```
 
