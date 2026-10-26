@@ -104,15 +104,25 @@ Generation and validation rules are in `specs/08_providers.md`.
 
 ### References
 
-Values may contain `${<ns>.<key>[.<field>]}` references. The namespace prefix
+Values may contain `${<ns>.<segment>...}` references. The namespace prefix
 is required — twig does not resolve unqualified `${x.y}` references. Three
-namespaces exist:
+namespaces exist, each with exactly one shape:
 
 | Form | Resolves to |
 |---|---|
 | `${modules.<instance>.<output>}` | `module.<instance>.<output>` (intra-leaf) |
-| `${remotes.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` (cross-leaf) |
+| `${remotes.<alias>.<instance>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<instance>.<output>` (cross-leaf) |
 | `${vars.<name>}` | value from the merged `vars:` section in the `vars.yaml` hierarchy (see `specs/07_inherited_vars.md`) |
+
+In the `remotes` form, `<instance>` is a module instance key declared in the
+remote leaf and `<output>` is one of that module's outputs — the remote leaf
+exposes one root output per module instance (see "Root-level outputs").
+twig does not open the remote leaf to check `<instance>` or `<output>`;
+Terraform reports an unsupported attribute at plan time.
+
+A reference with any other number of segments is a fatal error (see
+`specs/06_errors.md`). The flat cross-leaf form `${remotes.<alias>.<output>}`
+is rejected with an error that names the namespaced form.
 
 A **pure** reference — the entire value string is one `${...}` token —
 becomes an unquoted HCL expression whose type matches the underlying value.
@@ -122,18 +132,20 @@ string.
 | YAML value | Generated HCL |
 |---|---|
 | `${modules.x.bucket_arn}` | `module.x.bucket_arn` |
-| `${remotes.vpc.vpc_id}` | `data.terraform_remote_state.vpc.outputs.vpc_id` |
+| `${remotes.vpc.main.vpc_id}` | `data.terraform_remote_state.vpc.outputs.main.vpc_id` |
 | `${modules.x.bucket_arn}/*` | `"${module.x.bucket_arn}/*"` |
 | `arn:aws:s3:::my-bucket` | `"arn:aws:s3:::my-bucket"` |
 
 ### Root-level outputs
 
-For local (non-git) module sources, twig reads each module's `outputs.tf`
-and emits a matching root-level `output` block for every output defined
-there. This is what makes `data "terraform_remote_state"` consumers work —
-without root-level output blocks, a state file exposes no outputs. Git
-sources are skipped (their `outputs.tf` is not locally readable at generate
-time; the root output blocks must be added manually or via CI).
+twig emits one root-level `output` per module instance, named after the
+instance key, whose value is the whole module object (`module.<instance>`).
+This is what makes `data "terraform_remote_state"` consumers work — without
+root-level output blocks, a state file exposes no outputs. Instance keys
+are unique within a leaf, so root output names never collide, and several
+instances of the same module source (e.g. two `aws/5/iam-user` modules) are
+valid in one leaf. Git-sourced modules are included. Sensitivity rules are
+in `specs/04_generation.md` §5.
 
 ### Example
 
@@ -191,14 +203,25 @@ modules:
 
 Note: `iam_cicd` and `iam_infra` require no `vars` — the `module` variable
 (`iam_cicd` / `iam_infra`) already distinguishes them within the component.
+Each instance also gets its own root output (`output "iam_cicd"`,
+`output "iam_infra"`), so another leaf reads e.g.
+`${remotes.<alias>.iam_cicd.user_name}`.
 
 ### Cross-leaf example
 
-```
-infra/aws/waldman/us-east-1/dev/ec2/app.yaml
-```
+The producer leaf declares its VPC module as instance `main`:
 
 ```yaml
+# infra/aws/waldman/us-east-1/base/vpc/main.yaml
+modules:
+  main:
+    source: aws/5/vpc
+```
+
+The consumer reads that instance's outputs:
+
+```yaml
+# infra/aws/waldman/us-east-1/dev/ec2/app.yaml
 remotes:
   vpc: infra/aws/waldman/us-east-1/base/vpc/main.yaml
 
@@ -206,11 +229,11 @@ modules:
   app:
     source: aws/5/ec2
     vars:
-      ec2_vpc_id:    ${remotes.vpc.vpc_id}
-      ec2_subnet_id: ${remotes.vpc.first_public_subnet_id}
+      ec2_vpc_id:    ${remotes.vpc.main.vpc_id}
+      ec2_subnet_id: ${remotes.vpc.main.first_public_subnet_id}
 ```
 
-twig generates a `data "terraform_remote_state" "vpc"` block that reads
-`vpc_id` and `first_public_subnet_id` from the vpc leaf's S3 state file.
-No coordination required between the two leaf operators beyond agreeing on
-output names.
+twig generates a `data "terraform_remote_state" "vpc"` block and reads
+`vpc_id` and `first_public_subnet_id` from the `main` root output in the vpc
+leaf's S3 state file. No coordination required between the two leaf
+operators beyond agreeing on the producer's instance key and output names.

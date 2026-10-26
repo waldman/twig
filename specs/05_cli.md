@@ -28,6 +28,11 @@ against their constraints. Pass-through flags go to the requested command,
 not to this init. `twig init` runs the same init and appends its
 pass-through flags.
 
+**Outputs**: `twig output` lists one entry per module instance (see
+`specs/04_generation.md` §5). Instances marked sensitive appear as
+`<sensitive>` in the listing; `twig output <leaf> -- <instance>` or
+`twig output <leaf> -- -json` prints their values.
+
 **Pass-through flags**: flags after `--` are forwarded verbatim to Terraform.
 
 ```

@@ -82,10 +82,12 @@ remotes:
   network: infra/aws/<profile>/<region>/base/network/main.yaml
 ```
 
-A leaf below `base/` can then reference `${remotes.network.<field>}`
-without declaring the alias itself. The alias namespace is shared with
-the leaf's own `remotes:` block — see `specs/02_leaf_file.md` for the
-leaf-level shape.
+A leaf below `base/` can then reference
+`${remotes.network.<instance>.<output>}` — e.g.
+`${remotes.network.vpc.first_public_subnet_id}` when the network leaf
+declares its VPC module as instance `vpc` — without declaring the alias
+itself. The alias namespace is shared with the leaf's own `remotes:` block
+— see `specs/02_leaf_file.md` for the leaf-level shape.
 
 - Aliases must not be reserved ref namespaces (`modules`, `remotes`, `vars`).
 - Aliases must match `[a-zA-Z_][a-zA-Z0-9_]*` (see `specs/02_leaf_file.md`).
@@ -106,7 +108,7 @@ module_defaults:
     vpc_availability_zones: 2
   aws/5/ec2:
     ec2_instance_type: t3.small
-    ec2_subnet_id:     ${remotes.network.first_public_subnet_id}
+    ec2_subnet_id:     ${remotes.network.vpc.first_public_subnet_id}
 ```
 
 ### Matching
@@ -143,7 +145,7 @@ resolved at generate time against the consuming leaf's context:
 | Reference | Resolved against |
 |---|---|
 | `${vars.<name>}` | merged `vars:` for this leaf |
-| `${remotes.<alias>.<field>}` | merged `remotes:` for this leaf (inherited + leaf-declared) |
+| `${remotes.<alias>.<instance>.<output>}` | merged `remotes:` for this leaf (inherited + leaf-declared) |
 | `${modules.<instance>.<field>}` | module instances declared in this leaf |
 
 A `module_defaults` value that references `${modules.sg.security_group_id}`

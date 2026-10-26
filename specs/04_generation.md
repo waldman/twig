@@ -6,7 +6,7 @@ Blocks are emitted in this order: `terraform`, `provider` (one per cloud,
 alphabetical, then one per `provider_aliases` entry, declaration order),
 `data "terraform_remote_state"` (referenced aliases only, alphabetical),
 `module` (one per `modules:` entry, declaration order),
-`output` (one per output in each local module's `outputs.tf`, sorted).
+`output` (one per module instance, declaration order).
 
 ### 1. terraform block
 
@@ -71,8 +71,8 @@ any module var produce no data block.
 
 Referenced-alias collection: after `module_defaults` injection and leaf
 `vars:` overlay, twig walks every module's resolved var values and
-collects every `${remotes.<alias>.<field>}` token. That set is the emit
-set.
+collects every `${remotes.<alias>.<instance>.<output>}` token. That set
+is the emit set.
 
 Aliases in the emit set that are missing from the effective remotes map
 fail generation with an unresolved-reference error.
@@ -126,24 +126,39 @@ module "<instance_key>" {
 
 ### 5. root-level output blocks
 
-For local (non-git) module sources, twig reads each module's `outputs.tf`
-and emits a root-level `output` block for every output declared there.
-These blocks expose the leaf's outputs so that other leaves can consume them
-via `data "terraform_remote_state"`. Without them, a state file has no
-outputs for remote consumers to read.
+One root-level `output` block per module instance, named after the
+instance key, whose value is the whole module object. These blocks expose
+the leaf's outputs so that other leaves can consume them via
+`data "terraform_remote_state"` as `${remotes.<alias>.<instance>.<output>}`.
+Without them, a state file has no outputs for remote consumers to read.
 
-Emitted after all module blocks, sorted alphabetically per module (in
-module declaration order), then alphabetically within each module's outputs.
+Emitted after all module blocks, in module declaration order. Every
+instance gets one, including instances whose module declares no outputs
+(value `{}`).
 
 ```hcl
-output "<output_name>" {
-  value     = module.<instance_key>.<output_name>
-  sensitive = true    # only when the module's output block sets it
+output "<instance_key>" {
+  value     = module.<instance_key>
+  sensitive = true    # only when the sensitivity rule below applies
 }
 ```
 
-Git-sourced modules are skipped — their `outputs.tf` is not locally
-readable at generate time.
+**Sensitivity.** Terraform rejects a root output whose value contains a
+sensitive value unless the output is marked `sensitive = true`. A module
+object contains every output of the module, so twig marks the instance's
+root output sensitive when:
+
+- `modules_path` is local and any `output` block in any of the module's
+  `.tf` files sets `sensitive = true`, or
+- `modules_path` is a git source — the module's files are not readable at
+  generate time, so twig marks every instance sensitive.
+
+Marking is per instance: one sensitive output marks the whole object. It
+affects only the producing leaf's display — `terraform output` lists the
+instance as `<sensitive>`; querying it by name or with `-json` prints the
+values. `terraform_remote_state` does not carry sensitivity to consuming
+leaves (verified on Terraform 1.15): consumers receive plain values for
+every field, including fields declared sensitive in the module.
 
 ## Provenance comments
 
