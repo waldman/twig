@@ -15,22 +15,22 @@ import (
 	"github.com/waldman/twig/internal/pathparse"
 )
 
-// refRe matches the three explicit ref forms:
-//   ${modules.ec2.vpc_id}  → ns=modules, key=ec2,       field=vpc_id
-//   ${remotes.vpc.vpc_id}  → ns=remotes, key=vpc,       field=vpc_id
-//   ${vars.vpn_cidr}       → ns=vars,    key=vpn_cidr,  field=""
-var refRe = regexp.MustCompile(`\$\{(modules|remotes|vars)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?\}`)
+// refRe matches ${<ns>.<key>[.<segment>...]}. The third group holds every
+// segment after the key, joined with dots; validateRefs enforces the single
+// shape each namespace accepts:
+//
+//	${modules.ec2.vpc_id}          → ns=modules, key=ec2,      field=vpc_id
+//	${remotes.vpc.network.vpc_id}  → ns=remotes, key=vpc,      field=network.vpc_id
+//	${vars.vpn_cidr}               → ns=vars,    key=vpn_cidr, field=""
+var refRe = regexp.MustCompile(`\$\{(modules|remotes|vars)\.([a-zA-Z_][a-zA-Z0-9_]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*))?\}`)
 
-// outputBlockRe captures the name and body of each output block.
-var outputBlockRe = regexp.MustCompile(`(?ms)^output\s+"([^"]+)"\s*\{([^}]*)\}`)
+// outputBlockRe captures the body of each top-level output block, up to its
+// closing brace in column 0 (terraform fmt layout), so braces nested in the
+// value expression do not end the match early.
+var outputBlockRe = regexp.MustCompile(`(?ms)^output\s+"[^"]+"\s*\{(.*?)^\}`)
 
 // sensitiveRe detects sensitive = true within an output block body.
 var sensitiveRe = regexp.MustCompile(`\bsensitive\s*=\s*true\b`)
-
-type outputMeta struct {
-	name      string
-	sensitive bool
-}
 
 type providerEntry struct {
 	Source string                 `yaml:"source"`
@@ -540,54 +540,59 @@ func writeReferencedRemoteStateBlocks(b *strings.Builder, cfg *config.Config, ef
 	return nil
 }
 
-// parseOutputMetas reads an outputs.tf file and returns sorted output metadata,
-// including whether each output is marked sensitive. Returns nil if the file
-// does not exist.
-func parseOutputMetas(path string) ([]outputMeta, error) {
-	data, err := os.ReadFile(path)
+// moduleHasSensitiveOutput reports whether any output block in the .tf files
+// of a local module directory sets sensitive = true. A missing directory has
+// no outputs.
+func moduleHasSensitiveOutput(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+		return false, err
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".tf" {
+			continue
 		}
-		return nil, err
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return false, err
+		}
+		for _, m := range outputBlockRe.FindAllSubmatch(data, -1) {
+			if sensitiveRe.Match(m[1]) {
+				return true, nil
+			}
+		}
 	}
-	matches := outputBlockRe.FindAllSubmatch(data, -1)
-	metas := make([]outputMeta, 0, len(matches))
-	for _, m := range matches {
-		metas = append(metas, outputMeta{
-			name:      string(m[1]),
-			sensitive: sensitiveRe.Match(m[2]),
-		})
-	}
-	sort.Slice(metas, func(i, j int) bool { return metas[i].name < metas[j].name })
-	return metas, nil
+	return false, nil
 }
 
-// writeRootOutputBlocks emits one root-level output block per output found in
-// each local module's outputs.tf. These blocks are required so that
-// data "terraform_remote_state" consumers can read this leaf's outputs.
-// sensitive = true is propagated so Terraform accepts outputs that reference
-// sensitive module outputs.
-// Git-sourced modules are skipped — their outputs.tf is not locally readable.
+// writeRootOutputBlocks emits one root-level output per module instance, named
+// after the instance key, whose value is the whole module object. Other leaves
+// read it as ${remotes.<alias>.<instance>.<output>}. Instance keys are unique
+// within a leaf, so the names never collide.
+//
+// Terraform rejects a root output that contains a sensitive value unless it is
+// marked sensitive, so the object is marked when any of the module's outputs
+// is. Git-sourced modules cannot be read at generate time and are always
+// marked.
 func writeRootOutputBlocks(b *strings.Builder, cfg *config.Config, l *leaf.Leaf) error {
-	if cfg.IsGitSource() {
-		return nil
-	}
 	for _, key := range l.ModuleKeys {
-		mod := l.Modules[key]
-		outputsPath := filepath.Join(cfg.ModulesRoot(), mod.Source, "outputs.tf")
-		metas, err := parseOutputMetas(outputsPath)
-		if err != nil {
-			return fmt.Errorf("module %q: reading outputs.tf: %w", key, err)
-		}
-		for _, meta := range metas {
-			b.WriteString(fmt.Sprintf("output %q {\n", meta.name))
-			b.WriteString(fmt.Sprintf("  value = module.%s.%s\n", key, meta.name))
-			if meta.sensitive {
-				b.WriteString("  sensitive = true\n")
+		sensitive := cfg.IsGitSource()
+		if !sensitive {
+			var err error
+			sensitive, err = moduleHasSensitiveOutput(filepath.Join(cfg.ModulesRoot(), l.Modules[key].Source))
+			if err != nil {
+				return fmt.Errorf("module %q: reading module outputs: %w", key, err)
 			}
-			b.WriteString("}\n\n")
 		}
+		b.WriteString(fmt.Sprintf("output %q {\n", key))
+		b.WriteString(fmt.Sprintf("  value = module.%s\n", key))
+		if sensitive {
+			b.WriteString("  sensitive = true\n")
+		}
+		b.WriteString("}\n\n")
 	}
 	return nil
 }
@@ -736,20 +741,42 @@ func mapToHCL(m map[string]interface{}, resolve func(string, string, string) str
 	return "{\n" + strings.Join(lines, "\n") + "\n    }", nil
 }
 
+// validateRefs checks every reference in a module's effective vars: its shape
+// (segments after the key) and that its target is declared. Shapes:
+// ${modules.<instance>.<output>}, ${remotes.<alias>.<instance>.<output>},
+// ${vars.<name>}.
 func validateRefs(moduleKey string, vars map[string]interface{}, modules map[string]*leaf.Module, remoteState map[string]string, inherited map[string]interface{}) error {
 	return walkRefs(vars, func(ns, key, field string) error {
+		ref := "${" + ns + "." + key + "}"
+		segments := 0
+		if field != "" {
+			ref = "${" + ns + "." + key + "." + field + "}"
+			segments = strings.Count(field, ".") + 1
+		}
 		switch ns {
 		case "modules":
+			if segments != 1 {
+				return fmt.Errorf("module %q: %s is malformed; expected ${modules.<instance>.<output>}", moduleKey, ref)
+			}
 			if _, ok := modules[key]; !ok {
-				return fmt.Errorf("module %q: ${modules.%s.%s} references undeclared module %q", moduleKey, key, field, key)
+				return fmt.Errorf("module %q: %s references undeclared module %q", moduleKey, ref, key)
 			}
 		case "remotes":
+			if segments == 1 {
+				return fmt.Errorf("module %q: %s uses the flat form; remote outputs are namespaced by module instance, write ${remotes.%s.<instance>.%s} where <instance> is the module key in the remote leaf", moduleKey, ref, key, field)
+			}
+			if segments != 2 {
+				return fmt.Errorf("module %q: %s is malformed; expected ${remotes.<alias>.<instance>.<output>}", moduleKey, ref)
+			}
 			if _, ok := remoteState[key]; !ok {
-				return fmt.Errorf("module %q: ${remotes.%s.%s} references undeclared remotes alias %q", moduleKey, key, field, key)
+				return fmt.Errorf("module %q: %s references undeclared remotes alias %q", moduleKey, ref, key)
 			}
 		case "vars":
+			if segments != 0 {
+				return fmt.Errorf("module %q: %s is malformed; expected ${vars.<name>}", moduleKey, ref)
+			}
 			if _, ok := inherited[key]; !ok {
-				return fmt.Errorf("module %q: ${vars.%s} references undeclared inherited variable %q", moduleKey, key, key)
+				return fmt.Errorf("module %q: %s references undeclared inherited variable %q", moduleKey, ref, key)
 			}
 		}
 		return nil

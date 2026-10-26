@@ -268,7 +268,7 @@ func TestGenerate_remoteStateBlocks(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.main.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -410,7 +410,7 @@ func TestGenerate_remoteStateRef(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.main.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -422,7 +422,7 @@ func TestGenerate_remoteStateRef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out, "ec2_vpc_id = data.terraform_remote_state.vpc.outputs.vpc_id") {
+	if !strings.Contains(out, "ec2_vpc_id = data.terraform_remote_state.vpc.outputs.main.vpc_id") {
 		t.Errorf("expected remote state ref, got:\n%s", out)
 	}
 }
@@ -433,7 +433,7 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_tag": "${remotes.vpc.name}/ec2"},
+				Vars:   map[string]interface{}{"ec2_tag": "${remotes.vpc.main.name}/ec2"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -445,7 +445,7 @@ func TestGenerate_remoteStateRefMixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out, `ec2_tag = "${data.terraform_remote_state.vpc.outputs.name}/ec2"`) {
+	if !strings.Contains(out, `ec2_tag = "${data.terraform_remote_state.vpc.outputs.main.name}/ec2"`) {
 		t.Errorf("expected interpolated remote state ref, got:\n%s", out)
 	}
 }
@@ -520,7 +520,7 @@ func TestGenerate_remoteStateBlocksBeforeModules(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.main.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"vpc"},
@@ -651,7 +651,7 @@ func TestGenerate_inheritedRemoteStateEmittedWhenReferenced(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
 		"ec2": {
 			Source: "aws/5/ec2",
-			Vars:   map[string]interface{}{"ec2_subnet_id": "${remotes.network.first_public_subnet_id}"},
+			Vars:   map[string]interface{}{"ec2_subnet_id": "${remotes.network.vpc.first_public_subnet_id}"},
 		},
 	})
 	l.Inherited = &leaf.Inherited{
@@ -667,7 +667,7 @@ func TestGenerate_inheritedRemoteStateEmittedWhenReferenced(t *testing.T) {
 	if !strings.Contains(out, `data "terraform_remote_state" "network"`) {
 		t.Errorf("expected data block for inherited remote alias:\n%s", out)
 	}
-	if !strings.Contains(out, `ec2_subnet_id = data.terraform_remote_state.network.outputs.first_public_subnet_id`) {
+	if !strings.Contains(out, `ec2_subnet_id = data.terraform_remote_state.network.outputs.vpc.first_public_subnet_id`) {
 		t.Errorf("expected ${remote.network.x} to resolve to data source:\n%s", out)
 	}
 }
@@ -697,7 +697,7 @@ func TestGenerate_leafRemoteStateOverridesInherited(t *testing.T) {
 		Modules: map[string]*leaf.Module{
 			"ec2": {
 				Source: "aws/5/ec2",
-				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.network.vpc_id}"},
+				Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.network.vpc.vpc_id}"},
 			},
 		},
 		RemoteStateKeys: []string{"network"},
@@ -733,7 +733,7 @@ func TestGenerate_moduleDefaultsRemoteRefEmitsDataBlock(t *testing.T) {
 			"network": "infra/aws/waldman/us-east-1/base/network/main.yaml",
 		},
 		ModuleDefaults: map[string]map[string]interface{}{
-			"aws/5/ec2": {"ec2_subnet_id": "${remotes.network.first_public_subnet_id}"},
+			"aws/5/ec2": {"ec2_subnet_id": "${remotes.network.vpc.first_public_subnet_id}"},
 		},
 		ModuleDefaultsOrigins: map[string]map[string]string{
 			"aws/5/ec2": {"ec2_subnet_id": "infra/aws/vars.yaml"},
@@ -811,7 +811,7 @@ func TestGenerate_remoteRefValidatesAgainstInherited(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
 		"ec2": {
 			Source: "aws/5/ec2",
-			Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.network.vpc_id}"},
+			Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.network.vpc.vpc_id}"},
 		},
 	})
 	l.Inherited = &leaf.Inherited{
@@ -831,7 +831,7 @@ func TestGenerate_remoteRefUnknownFailsWithInherited(t *testing.T) {
 	l := makeLeaf([]string{"ec2"}, map[string]*leaf.Module{
 		"ec2": {
 			Source: "aws/5/ec2",
-			Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.nowhere.vpc_id}"},
+			Vars:   map[string]interface{}{"ec2_vpc_id": "${remotes.nowhere.vpc.vpc_id}"},
 		},
 	})
 	l.Inherited = &leaf.Inherited{
@@ -860,18 +860,34 @@ func localModuleCfg(t *testing.T, modulesDir string) *config.Config {
 	}
 }
 
-func writeOutputsTF(t *testing.T, modulesDir, source, content string) {
+func writeModuleFile(t *testing.T, modulesDir, source, name, content string) {
 	t.Helper()
 	dir := filepath.Join(modulesDir, source)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "outputs.tf"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestGenerate_rootOutputsEmittedForLocalModule(t *testing.T) {
+func writeOutputsTF(t *testing.T, modulesDir, source, content string) {
+	t.Helper()
+	writeModuleFile(t, modulesDir, source, "outputs.tf", content)
+}
+
+// rootOutputBlock returns the generated root output block named name, or ""
+// when there is none.
+func rootOutputBlock(out, name string) string {
+	start := strings.Index(out, "output \""+name+"\" {\n")
+	if start == -1 {
+		return ""
+	}
+	end := strings.Index(out[start:], "\n}\n")
+	return out[start : start+end+3]
+}
+
+func TestGenerate_rootOutputPerInstance(t *testing.T) {
 	modulesDir := t.TempDir()
 	writeOutputsTF(t, modulesDir, "aws/5/vpc", `
 output "vpc_id" {
@@ -889,15 +905,41 @@ output "first_private_subnet_id" {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got, want := rootOutputBlock(out, "vpc"), "output \"vpc\" {\n  value = module.vpc\n}\n"; got != want {
+		t.Errorf("root output block = %q, want %q\ngot:\n%s", got, want, out)
+	}
+	for _, flat := range []string{`output "vpc_id"`, `output "first_private_subnet_id"`} {
+		if strings.Contains(out, flat) {
+			t.Errorf("flat root output %s must not be emitted:\n%s", flat, out)
+		}
+	}
+}
 
-	for _, want := range []string{
-		`output "first_private_subnet_id"`,
-		`value = module.vpc.first_private_subnet_id`,
-		`output "vpc_id"`,
-		`value = module.vpc.vpc_id`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q\ngot:\n%s", want, out)
+func TestGenerate_rootOutputsSameSourceTwice(t *testing.T) {
+	// Two instances of one module source get two distinct root outputs, not
+	// duplicate definitions of the module's output names.
+	modulesDir := t.TempDir()
+	writeOutputsTF(t, modulesDir, "aws/5/iam-user", `
+output "user_name" {
+  value = aws_iam_user.this.name
+}
+`)
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"deploy_user", "audit_user"}, map[string]*leaf.Module{
+		"deploy_user": {Source: "aws/5/iam-user"},
+		"audit_user":  {Source: "aws/5/iam-user"},
+	})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "\noutput \""); n != 2 {
+		t.Errorf("want 2 root outputs, got %d:\n%s", n, out)
+	}
+	for _, key := range []string{"deploy_user", "audit_user"} {
+		if rootOutputBlock(out, key) == "" {
+			t.Errorf("missing root output %q:\n%s", key, out)
 		}
 	}
 }
@@ -914,7 +956,7 @@ func TestGenerate_rootOutputsAfterModuleBlocks(t *testing.T) {
 	}
 
 	modIdx := strings.Index(out, `module "vpc"`)
-	outIdx := strings.Index(out, `output "vpc_id"`)
+	outIdx := strings.Index(out, `output "vpc"`)
 	if modIdx == -1 || outIdx == -1 {
 		t.Fatal("expected both module and output blocks")
 	}
@@ -923,8 +965,8 @@ func TestGenerate_rootOutputsAfterModuleBlocks(t *testing.T) {
 	}
 }
 
-func TestGenerate_rootOutputsNoOutputsFile(t *testing.T) {
-	// Module dir exists but has no outputs.tf — silently emits nothing.
+func TestGenerate_rootOutputsModuleWithoutOutputs(t *testing.T) {
+	// A module that declares no outputs still gets a root output (value {}).
 	modulesDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(modulesDir, "aws/5/no-outputs"), 0o755); err != nil {
 		t.Fatal(err)
@@ -934,14 +976,16 @@ func TestGenerate_rootOutputsNoOutputsFile(t *testing.T) {
 
 	out, err := Generate(cfg, testSeg, l)
 	if err != nil {
-		t.Fatalf("missing outputs.tf must not be an error: %v", err)
+		t.Fatalf("a module without outputs must not be an error: %v", err)
 	}
-	if strings.Contains(out, `output "`) {
-		t.Errorf("expected no output blocks when outputs.tf absent:\n%s", out)
+	if got, want := rootOutputBlock(out, "x"), "output \"x\" {\n  value = module.x\n}\n"; got != want {
+		t.Errorf("root output block = %q, want %q", got, want)
 	}
 }
 
-func TestGenerate_rootOutputsGitSourceSkipped(t *testing.T) {
+func TestGenerate_rootOutputsGitSourceAlwaysSensitive(t *testing.T) {
+	// Git-sourced module files are not readable at generate time, so the
+	// object output is always marked sensitive.
 	gitCfg := &config.Config{
 		ModulesPath: "github.com/waldman/terraform//modules",
 		ModulesRef:  "v1.0.0",
@@ -954,8 +998,8 @@ func TestGenerate_rootOutputsGitSourceSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, `output "`) {
-		t.Errorf("git-source module must not emit root output blocks:\n%s", out)
+	if got, want := rootOutputBlock(out, "vpc"), "output \"vpc\" {\n  value = module.vpc\n  sensitive = true\n}\n"; got != want {
+		t.Errorf("root output block = %q, want %q", got, want)
 	}
 }
 
@@ -973,19 +1017,18 @@ func TestGenerate_rootOutputsMultiModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		`output "vpc_id"`,
-		`value = module.vpc.vpc_id`,
-		`output "bucket_arn"`,
-		`value = module.bucket.bucket_arn`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q\ngot:\n%s", want, out)
+	for _, key := range []string{"vpc", "bucket"} {
+		if want := "output \"" + key + "\" {\n  value = module." + key + "\n}\n"; rootOutputBlock(out, key) != want {
+			t.Errorf("missing or wrong root output %q:\n%s", key, out)
 		}
+	}
+	if strings.Index(out, `output "vpc"`) > strings.Index(out, `output "bucket"`) {
+		t.Errorf("root outputs must follow module declaration order:\n%s", out)
 	}
 }
 
-func TestGenerate_rootOutputsSensitivePropagated(t *testing.T) {
+func TestGenerate_rootOutputsSensitiveObject(t *testing.T) {
+	// One sensitive output marks the whole instance object sensitive.
 	modulesDir := t.TempDir()
 	writeOutputsTF(t, modulesDir, "aws/5/vm", `
 output "public_ip" {
@@ -1003,24 +1046,54 @@ output "admin_password" {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, `output "public_ip"`) && strings.Contains(out, `sensitive = true`) {
-		// sensitive must only appear on the admin_password block, not public_ip
-		// (checked below via substring proximity — this path would be ambiguous)
+	if got, want := rootOutputBlock(out, "vm"), "output \"vm\" {\n  value = module.vm\n  sensitive = true\n}\n"; got != want {
+		t.Errorf("root output block = %q, want %q", got, want)
 	}
-	if !strings.Contains(out, "output \"admin_password\"") {
-		t.Fatalf("missing admin_password output block:\n%s", out)
+}
+
+func TestGenerate_rootOutputsSensitiveAfterNestedBraces(t *testing.T) {
+	// sensitive = true after an object-valued expression must still be found.
+	modulesDir := t.TempDir()
+	writeOutputsTF(t, modulesDir, "aws/5/iam-user", `
+output "credentials" {
+  value = {
+    access_key_id = aws_iam_access_key.this.id
+  }
+  sensitive = true
+}
+`)
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"user"}, map[string]*leaf.Module{"user": {Source: "aws/5/iam-user"}})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// admin_password block must carry sensitive = true
-	idx := strings.Index(out, `output "admin_password"`)
-	block := out[idx : idx+strings.Index(out[idx:], "\n}\n")+3]
-	if !strings.Contains(block, "sensitive = true") {
-		t.Errorf("admin_password output must carry sensitive = true:\n%s", block)
+	if !strings.Contains(rootOutputBlock(out, "user"), "sensitive = true") {
+		t.Errorf("sensitive output with nested braces not detected:\n%s", out)
 	}
-	// public_ip block must NOT carry sensitive = true
-	idx2 := strings.Index(out, `output "public_ip"`)
-	block2 := out[idx2 : idx2+strings.Index(out[idx2:], "\n}\n")+3]
-	if strings.Contains(block2, "sensitive = true") {
-		t.Errorf("public_ip output must not carry sensitive = true:\n%s", block2)
+}
+
+func TestGenerate_rootOutputsSensitiveOutsideOutputsTF(t *testing.T) {
+	// The module object includes outputs from every .tf file, so detection
+	// scans every .tf file too.
+	modulesDir := t.TempDir()
+	writeOutputsTF(t, modulesDir, "aws/5/vm", `output "public_ip" { value = aws_instance.main.public_ip }`)
+	writeModuleFile(t, modulesDir, "aws/5/vm", "main.tf", `
+output "admin_password" {
+  value     = random_password.admin.result
+  sensitive = true
+}
+`)
+	cfg := localModuleCfg(t, modulesDir)
+	l := makeLeaf([]string{"vm"}, map[string]*leaf.Module{"vm": {Source: "aws/5/vm"}})
+
+	out, err := Generate(cfg, testSeg, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rootOutputBlock(out, "vm"), "sensitive = true") {
+		t.Errorf("sensitive output declared outside outputs.tf not detected:\n%s", out)
 	}
 }
 
@@ -1063,8 +1136,8 @@ func TestGenerate_providerAliasHappyPath(t *testing.T) {
 	mkAcctRegionDir(t, "aws", "shared", "us-east-1")
 
 	l := &leaf.Leaf{
-		ModuleKeys: []string{"ec2"},
-		Modules:    map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
+		ModuleKeys:          []string{"ec2"},
+		Modules:             map[string]*leaf.Module{"ec2": {Source: "aws/5/ec2"}},
 		ProviderAliasClouds: []string{"aws"},
 		ProviderAliases: map[string][]leaf.ProviderAlias{
 			"aws": {
@@ -1299,5 +1372,46 @@ func TestGenerate_moduleProvidersEmptyNoop(t *testing.T) {
 	}
 	if strings.Contains(out, "providers = {") {
 		t.Errorf("empty providers must not emit providers block\ngot:\n%s", out)
+	}
+}
+
+func TestGenerate_remoteRefFlatFormRejected(t *testing.T) {
+	l := &leaf.Leaf{
+		ModuleKeys: []string{"ec2"},
+		Modules: map[string]*leaf.Module{
+			"ec2": {Source: "aws/5/ec2", Vars: map[string]interface{}{"ec2_vpc_id": "${remotes.vpc.vpc_id}"}},
+		},
+		RemoteStateKeys: []string{"vpc"},
+		RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
+	}
+	_, err := Generate(testCfg, testSeg, l)
+	if err == nil || !strings.Contains(err.Error(), "${remotes.vpc.<instance>.vpc_id}") {
+		t.Errorf("expected flat-form error naming ${remotes.vpc.<instance>.vpc_id}, got: %v", err)
+	}
+}
+
+func TestGenerate_refShapeMalformed(t *testing.T) {
+	for _, ref := range []string{
+		"${modules.bucket}",
+		"${modules.bucket.bucket_arn.extra}",
+		"${remotes.vpc}",
+		"${remotes.vpc.main.vpc_id.extra}",
+		"${vars.vpn_cidr.extra}",
+		"arn:${remotes.vpc}/*", // embedded references are checked too
+	} {
+		l := &leaf.Leaf{
+			ModuleKeys: []string{"bucket", "app"},
+			Modules: map[string]*leaf.Module{
+				"bucket": {Source: "aws/5/s3-bucket"},
+				"app":    {Source: "aws/5/ec2", Vars: map[string]interface{}{"ec2_ref": ref}},
+			},
+			RemoteStateKeys: []string{"vpc"},
+			RemoteState:     map[string]string{"vpc": "infra/aws/waldman/us-east-1/base/vpc/test.yaml"},
+			Inherited:       &leaf.Inherited{Vars: map[string]interface{}{"vpn_cidr": "10.30.0.0/16"}},
+		}
+		_, err := Generate(testCfg, testSeg, l)
+		if err == nil || !strings.Contains(err.Error(), "is malformed") {
+			t.Errorf("%s: expected malformed-reference error, got: %v", ref, err)
+		}
 	}
 }
