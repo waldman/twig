@@ -141,7 +141,7 @@ func run(args []string) error {
 	}
 
 	autoInit := func() error {
-		if err := runner.Init(cacheDir, extraEnv); err != nil {
+		if err := runner.Init(cacheDir, nil, extraEnv); err != nil {
 			return fmt.Errorf("init failed: %w", err)
 		}
 		return nil
@@ -149,7 +149,7 @@ func run(args []string) error {
 
 	switch cmd {
 	case "init":
-		return runner.Init(cacheDir, extraEnv)
+		return runner.Init(cacheDir, extraArgs, extraEnv)
 	case "plan", "apply", "destroy", "output":
 		if err := autoInit(); err != nil {
 			return err

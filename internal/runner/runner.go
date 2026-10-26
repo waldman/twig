@@ -138,11 +138,13 @@ func Terraform(cacheDir string, subcmd string, extraArgs, extraEnv []string) err
 	return cmd.Run()
 }
 
-// Init runs terraform init with -reconfigure and -upgrade before every
-// plan/apply/destroy/output/state invocation. -reconfigure accepts backend
-// block changes without manual intervention; -upgrade re-resolves providers
-// against current version constraints. Providers stay cached in the cache dir
-// so no download occurs when constraints are unchanged.
-func Init(cacheDir string, extraEnv []string) error {
-	return Terraform(cacheDir, "init", []string{"-reconfigure", "-upgrade"}, extraEnv)
+// Init runs terraform init with -reconfigure and -upgrade, followed by
+// extraArgs. twig calls it before every plan/apply/destroy/output/state
+// invocation (no extraArgs) and for `twig init` (extraArgs are the
+// pass-through flags). -reconfigure accepts backend block changes without
+// manual intervention; -upgrade re-resolves providers against current
+// version constraints, downloading one only when a newer matching release
+// exists.
+func Init(cacheDir string, extraArgs, extraEnv []string) error {
+	return Terraform(cacheDir, "init", append([]string{"-reconfigure", "-upgrade"}, extraArgs...), extraEnv)
 }
