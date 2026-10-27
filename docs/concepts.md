@@ -41,7 +41,7 @@ Values in a leaf's module vars can contain three kinds of references. The namesp
 | Reference | Resolves to | Where it points |
 |---|---|---|
 | `${modules.<instance>.<output>}` | `module.<instance>.<output>` | Another module in the same leaf |
-| `${remotes.<alias>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<output>` | Another leaf's state |
+| `${remotes.<alias>.<instance>.<output>}` | `data.terraform_remote_state.<alias>.outputs.<instance>.<output>` | An output of module `<instance>` in another leaf |
 | `${vars.<name>}` | inlined value from inherited `vars:` | A `vars.yaml` up the hierarchy |
 
 Pure references (`value: ${modules.x.y}`) become unquoted HCL expressions with the correct type. Embedded references (`value: "prefix-${modules.x.y}-suffix"`) become interpolated strings.
@@ -63,6 +63,8 @@ Merge rule everywhere: closer to the leaf wins per key. Map values are replaced 
 Two properties of the generated `main.tf` that flow from the model above:
 
 - **Lazy emission of remote state:** `data "terraform_remote_state" "<alias>"` blocks appear in the generated output only for aliases actually referenced by some resolved module var. Aliases declared in a shared `vars.yaml` but not used by this particular leaf produce nothing.
+
+- **One root output per module instance:** each instance is exposed as an object output named after its key, which is what `${remotes.<alias>.<instance>.<output>}` reads from another leaf.
 
 - **Provenance comments:** every argument in a generated module block carries a trailing `# from: <origin>` comment identifying where that key was declared — the path, the leaf, or a specific `vars.yaml` file. Read `main.tf` and you can trace any value in one step without walking the hierarchy manually.
 

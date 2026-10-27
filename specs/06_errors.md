@@ -64,9 +64,11 @@ Applied against the **effective** context — leaf modules, effective merged
 
 | Condition | Error |
 |---|---|
-| `${modules.<key>.<field>}` where `<key>` is not a declared module instance in this leaf | fatal |
-| `${remotes.<alias>.<field>}` where `<alias>` is not present in the effective merged `remotes:` for this leaf | fatal |
+| `${modules.<instance>.<output>}` where `<instance>` is not a declared module instance in this leaf | fatal |
+| `${remotes.<alias>.<instance>.<output>}` where `<alias>` is not present in the effective merged `remotes:` for this leaf | fatal |
 | `${vars.<name>}` where `<name>` is not present in the effective merged `vars:` for this leaf | fatal |
+| Flat cross-leaf form `${remotes.<alias>.<output>}` — the error names the namespaced form `${remotes.<alias>.<instance>.<output>}` | fatal |
+| Any other reference whose segment count does not match its namespace's form — e.g. `${modules.x}`, `${modules.x.y.z}`, `${remotes.x}`, `${remotes.a.b.c.d}`, `${vars.x.y}` | fatal |
 
 ### Inherited (vars.yaml)
 
@@ -77,7 +79,7 @@ Applied against the **effective** context — leaf modules, effective merged
 | Reserved path variable used as a key inside any `module_defaults.<source>` map | fatal |
 | Reserved ref namespace (`modules`, `remotes`, `vars`) used as a `remotes` alias in `vars.yaml` | fatal |
 | `remotes` alias in `vars.yaml` does not match `[a-zA-Z_][a-zA-Z0-9_]*` | fatal |
-| Reference (`${modules.x.y}`, `${remotes.x.y}`, `${vars.x}`) appears inside a `vars:` value in `vars.yaml` (references are permitted only inside `module_defaults.<source>.<var>` values) | fatal |
+| Reference (`${modules.x.y}`, `${remotes.x.y.z}`, `${vars.x}`) appears inside a `vars:` value in `vars.yaml` (references are permitted only inside `module_defaults.<source>.<var>` values) | fatal |
 | `remotes` alias in `vars.yaml` maps to a leaf path that does not match the path convention (checked lazily — only when the alias is actually referenced and the data block is emitted) | fatal |
 
 ### env_files
