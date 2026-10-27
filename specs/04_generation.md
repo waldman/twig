@@ -3,8 +3,9 @@
 ## Generated main.tf structure
 
 Blocks are emitted in this order: `terraform`, `provider` (one per cloud,
-alphabetical), `data "terraform_remote_state"` (referenced aliases only,
-alphabetical), `module` (one per `modules:` entry, declaration order),
+alphabetical, then one per `provider_aliases` entry, declaration order),
+`data "terraform_remote_state"` (referenced aliases only, alphabetical),
+`module` (one per `modules:` entry, declaration order),
 `output` (one per output in each local module's `outputs.tf`, sorted).
 
 ### 1. terraform block
@@ -27,19 +28,35 @@ terraform {
 ```
 
 `required_providers` is populated from `infra/<cloud>/providers.yaml` for
-each cloud used by the leaf (see `specs/08_providers.md`). The `<major>`
+each cloud used by the leaf (see `specs/08_providers.md`) — one entry per
+cloud, shared by that cloud's aliased provider blocks. The `<major>`
 segment in the version constraint comes from the module source path — e.g.
 a module sourced from `aws/5/vpc` yields `version = "~> 5.0"`.
 
 ### 2. provider blocks
 
-One block per distinct cloud used by the leaf's modules. Config values are
+One block per distinct cloud used by the leaf's modules. A leaf with no
+modules emits one block per cloud declared in `providers.yaml` instead, with
+`required_providers` entries that carry no version constraint, so Terraform
+can still plan the destruction of resources left in state. Config values are
 taken from `infra/<cloud>/providers.yaml`, with `${cloud|profile|region|environment|class|component}`
 path-variable substitutions applied.
 
 ```hcl
 provider "<provider-hcl-name>" {
   <key> = <value>
+}
+```
+
+These are followed by one aliased block per `provider_aliases` entry, in
+declaration order (rules in `specs/08_providers.md`):
+
+```hcl
+provider "<provider-hcl-name>" {
+  alias   = "<account>_<region>"
+  profile = "<account>"
+  region  = "<region>"
+  # other keys from providers.yaml
 }
 ```
 
@@ -80,9 +97,12 @@ One block per module entry in the leaf, in declaration order.
 
 For each module instance, the emitted arguments are, in this order:
 
-1. The seven path variables (`cloud`, `profile`, `region`, `environment`,
+1. `providers = { ... }`, only when the instance declares `providers:` —
+   one `<module-provider-key> = <cloud>.<alias-name>` line per entry,
+   sorted by key.
+2. The seven path variables (`cloud`, `profile`, `region`, `environment`,
    `class`, `component`, `module`), always present.
-2. The effective vars for this instance — the merge of
+3. The effective vars for this instance — the merge of
    `module_defaults[<mod.source>]` from the inherited hierarchy overlaid
    by `modules.<instance>.vars` from the leaf. Leaf wins per-key.
    Emitted in alphabetical order.
@@ -117,7 +137,8 @@ module declaration order), then alphabetically within each module's outputs.
 
 ```hcl
 output "<output_name>" {
-  value = module.<instance_key>.<output_name>
+  value     = module.<instance_key>.<output_name>
+  sensitive = true    # only when the module's output block sets it
 }
 ```
 

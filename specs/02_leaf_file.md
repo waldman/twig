@@ -17,8 +17,14 @@ declares which modules to call and the variable values to pass.
 modules:
   <instance_key>:
     source: <cloud>/<version>/<module-name>
+    providers:                       # optional — see "Provider aliases"
+      <module-provider-key>: <alias-name>
     vars:
       <variable_name>: <value>
+
+provider_aliases:                    # optional — see "Provider aliases"
+  <cloud>:
+    - {account: <account>, region: <region>}
 ```
 
 ### Rules
@@ -28,12 +34,21 @@ modules:
   variable injected into that module call.
 - `instance_key` must not be one of the reserved ref namespaces (`modules`,
   `remotes`, `vars`).
+- `instance_key` must match `[a-zA-Z_][a-zA-Z0-9_]*`, the identifier
+  charset of twig's `${...}` reference syntax. A key outside it (for example
+  one containing a hyphen) could never be referenced, so it is rejected when
+  the leaf is loaded.
 - `source` is resolved against `modules_path` (see
   `specs/01_project_config.md`) — local directory for local `modules_path`,
   git URL for git `modules_path`.
 - All seven path variables are injected automatically and cannot appear
   in `vars`.
 - `vars` values are strings, numbers, booleans, lists, or maps.
+- String values, at any depth of a list or map, may contain the path
+  variables `${cloud}`, `${profile}`, `${region}`, `${environment}`,
+  `${class}`, and `${component}`; they are replaced with the leaf's own
+  values at generate time. The same applies to `module_defaults` values
+  (see `specs/07_inherited_vars.md`).
 
 ### Remote state references
 
@@ -48,6 +63,8 @@ remotes:
 
 - Aliases must not conflict with module instance keys.
 - Aliases must not be reserved ref namespaces (`modules`, `remotes`, `vars`).
+- Aliases must match `[a-zA-Z_][a-zA-Z0-9_]*`, for the same reason as
+  instance keys.
 - The same backend config (bucket, region, profile) is used; only the `key`
   changes to point at the target leaf's state file.
 - The leaf's `remotes:` block merges with the inherited `remotes:` map from
@@ -57,6 +74,33 @@ remotes:
   a `data "terraform_remote_state"` block in the output (lazy emission).
   Declaring an alias here or in a `vars.yaml` and never referencing it
   is not an error.
+
+### Provider aliases
+
+A leaf may declare extra, aliased provider blocks with `provider_aliases:`
+and route them into module instances with `providers:`:
+
+```yaml
+provider_aliases:
+  aws:
+    - {account: waldman, region: us-west-2}
+    - {account: shared,  region: us-east-1}
+
+modules:
+  peering:
+    source: aws/5/vpc-peering
+    providers:
+      aws.peer: waldman_us_west_2
+```
+
+- Each `provider_aliases` entry is an `(account, region)` target; both keys
+  are required. The alias name is `<account>_<region>`, with dashes replaced
+  by underscores.
+- `providers:` maps a module-side provider key (`aws` for the module's
+  default provider, `aws.<name>` for one of its `configuration_aliases`) to
+  an alias name declared in `provider_aliases`.
+
+Generation and validation rules are in `specs/08_providers.md`.
 
 ### References
 

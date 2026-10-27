@@ -72,6 +72,8 @@ without editing `twig.yaml`.
 Emitted verbatim into the generated `terraform { backend "s3" {} }` block.
 `key` is derived from the leaf path and **must not** appear in `twig.yaml`.
 Any other key/value pair from the map is passed through unchanged.
+Values `true` and `false` are emitted as HCL booleans; every other value is
+emitted as a quoted string.
 
 `use_lockfile: true` is the standard locking mechanism (Terraform >= 1.10,
 native S3 object locking). The deprecated `dynamodb_table` key is silently

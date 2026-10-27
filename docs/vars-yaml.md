@@ -15,13 +15,16 @@ infra/<cloud>/<profile>/<region>/<env>/<class>/vars.yaml     # all leaves in cla
 
 Any leaf inherits every `vars.yaml` above it. Missing files are silently skipped.
 
-## Three top-level sections
+## Four top-level sections
 
 All optional; any other top-level key is a fatal error.
 
 ```yaml
 vars:
   <name>: <value>
+
+env_files:
+  - <path>   # KEY=value files exported into Terraform's environment
 
 remotes:
   <alias>: <path-to-leaf.yaml relative to project root>
@@ -76,6 +79,7 @@ Semantics:
 
 - Merges with the leaf's own `remotes:` — leaf wins per alias on collision.
 - Aliases must not be reserved ref namespaces (`modules`, `remotes`, `vars`).
+- Aliases must match `[a-zA-Z_][a-zA-Z0-9_]*`.
 - Emission is lazy (see [Lazy emission](#lazy-emission) below).
 
 ## `module_defaults:` — defaults scoped to a module source
@@ -107,7 +111,7 @@ Two module instances in the same leaf that share the same source both receive th
 
 ### References inside `module_defaults` values
 
-Values may contain any of the three reference forms — resolved at generate time against the consuming leaf's context:
+Values may contain the path variables `${cloud}`, `${profile}`, `${region}`, `${environment}`, `${class}`, and `${component}` (replaced with the consuming leaf's values) and any of the three reference forms, resolved at generate time against the consuming leaf's context:
 
 | Reference | Resolved against |
 |---|---|
