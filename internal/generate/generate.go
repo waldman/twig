@@ -312,15 +312,20 @@ func effectiveModuleVars(mod *leaf.Module, inh *leaf.Inherited) map[string]inter
 }
 
 // effectiveModuleVarsWithOrigins is like effectiveModuleVars but also returns
-// per-key origin strings for provenance comments.
-func effectiveModuleVarsWithOrigins(instanceKey string, mod *leaf.Module, inh *leaf.Inherited) (map[string]interface{}, map[string]string) {
+// per-key origin strings for provenance comments. vars.yaml origins are shown
+// relative to root so generated output never exposes the local directory layout.
+func effectiveModuleVarsWithOrigins(root, instanceKey string, mod *leaf.Module, inh *leaf.Inherited) (map[string]interface{}, map[string]string) {
 	values := make(map[string]interface{})
 	origins := make(map[string]string)
 	if defaults, ok := inh.ModuleDefaults[mod.Source]; ok {
 		defaultsOrigins := inh.ModuleDefaultsOrigins[mod.Source]
 		for k, v := range defaults {
 			values[k] = v
-			origins[k] = fmt.Sprintf("%s: module_defaults.%q", defaultsOrigins[k], mod.Source)
+			path := defaultsOrigins[k]
+			if rel, err := filepath.Rel(root, path); err == nil {
+				path = filepath.ToSlash(rel)
+			}
+			origins[k] = fmt.Sprintf("%s: module_defaults.%q", path, mod.Source)
 		}
 	}
 	leafOrigin := fmt.Sprintf("leaf: modules.%s.vars", instanceKey)
@@ -633,7 +638,7 @@ func writeModuleBlock(b *strings.Builder, key string, mod *leaf.Module, inh *lea
 
 	// Effective vars: inherited module_defaults[mod.Source] overlaid by the
 	// leaf's own modules.<key>.vars. Leaf wins per key.
-	values, origins := effectiveModuleVarsWithOrigins(key, mod, inh)
+	values, origins := effectiveModuleVarsWithOrigins(cfg.Root, key, mod, inh)
 
 	if len(values) > 0 {
 		b.WriteString("\n")
