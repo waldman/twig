@@ -154,7 +154,7 @@ Every argument in a generated module block carries a trailing `# from: <origin>`
 |---|---|
 | `path` | one of the seven path variables |
 | `leaf: modules.<instance>.vars` | declared directly in the leaf |
-| `<path/to/vars.yaml>: module_defaults."<source>"` | inherited from a `module_defaults` entry in the named file |
+| `<path/to/vars.yaml>: module_defaults."<source>"` | inherited from a `module_defaults` entry in the named file (path relative to the project root) |
 
 Origin tracks where the **key** was declared, not what the value resolves to. A leaf var `ec2_subnet_id: ${remotes.network.vpc.first_public_subnet_id}` still shows leaf origin — the ref target is orthogonal.
 
@@ -209,8 +209,8 @@ data "terraform_remote_state" "network" {
 module "web" {
   # ... path vars with # from: path ...
   ec2_ami           = "ami-abc123"                                                     # from: leaf: modules.web.vars
-  ec2_instance_type = "t3.small"                                                       # from: /.../infra/aws/vars.yaml: module_defaults."aws/5/ec2"
-  ec2_subnet_id     = data.terraform_remote_state.network.outputs.vpc.first_public_subnet_id  # from: /.../infra/aws/vars.yaml: module_defaults."aws/5/ec2"
+  ec2_instance_type = "t3.small"                                                       # from: infra/aws/vars.yaml: module_defaults."aws/5/ec2"
+  ec2_subnet_id     = data.terraform_remote_state.network.outputs.vpc.first_public_subnet_id  # from: infra/aws/vars.yaml: module_defaults."aws/5/ec2"
 }
 ```
 

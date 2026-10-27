@@ -791,15 +791,18 @@ func TestGenerate_provenanceModuleDefault(t *testing.T) {
 			"aws/5/ec2": {"ec2_instance_type": "t3.small"},
 		},
 		ModuleDefaultsOrigins: map[string]map[string]string{
-			"aws/5/ec2": {"ec2_instance_type": "/abs/path/infra/aws/vars.yaml"},
+			"aws/5/ec2": {"ec2_instance_type": filepath.Join(testCfg.Root, "infra", "aws", "vars.yaml")},
 		},
 	}
 	out, err := Generate(testCfg, testSeg, l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `ec2_instance_type = "t3.small"  # from: /abs/path/infra/aws/vars.yaml: module_defaults."aws/5/ec2"`) {
-		t.Errorf("expected module_defaults provenance:\n%s", out)
+	if !strings.Contains(out, `ec2_instance_type = "t3.small"  # from: infra/aws/vars.yaml: module_defaults."aws/5/ec2"`) {
+		t.Errorf("expected module_defaults provenance relative to the project root:\n%s", out)
+	}
+	if strings.Contains(out, "# from: "+testCfg.Root) {
+		t.Errorf("provenance comment must not contain the absolute project root:\n%s", out)
 	}
 }
 
