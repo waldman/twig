@@ -170,7 +170,11 @@ origin forms:
 |---|---|
 | `path` | one of the seven path variables derived from the leaf's file path |
 | `leaf: modules.<instance>.vars` | declared directly in the leaf's `modules.<instance>.vars` block |
-| `<path/to/vars.yaml>: module_defaults."<source>"` | inherited from a `module_defaults` entry in the named `vars.yaml` file |
+| `<path/to/vars.yaml>: module_defaults."<source>"` | inherited from a `module_defaults` entry in the named `vars.yaml` file; the path is relative to the project root (the directory holding `twig.yaml`), e.g. `infra/aws/vars.yaml` |
+
+Provenance comments never contain absolute paths, so `twig show` output
+can be shared without exposing the local directory layout. (Module `source`
+paths stay absolute: Terraform resolves them from the cache dir.)
 
 Reference resolution does not affect provenance: a value that started as
 `${vars.x}` in the leaf's vars still shows `# from: leaf: modules.<instance>.vars`
