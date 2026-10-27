@@ -459,7 +459,7 @@ func makeResolver(modules map[string]*leaf.Module, remoteState map[string]string
 
 func writeTerraformBlock(b *strings.Builder, cfg *config.Config, seg *pathparse.Segments, providers []providerReq) {
 	b.WriteString("terraform {\n")
-	b.WriteString("  required_version = \">= 1.1\"\n")
+	b.WriteString("  required_version = \">= 1.10\"\n")
 
 	if len(providers) > 0 {
 		// required_providers is one row per cloud; alias blocks reuse the

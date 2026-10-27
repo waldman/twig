@@ -299,6 +299,7 @@ func TestGenerate_requiredProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
+		`required_version = ">= 1.10"`,
 		`required_providers`,
 		`aws = {`,
 		`source  = "hashicorp/aws"`,
